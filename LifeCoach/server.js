@@ -8,6 +8,13 @@ const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
   : null;
 
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', 'https://literig.com');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static('.'));
 
@@ -19,6 +26,18 @@ app.get('/api/health', async (_req, res) => {
   } catch (error) {
     console.error('Database health check failed:', error.message);
     res.status(503).json({ ok: false, database: 'unavailable' });
+  }
+});
+
+app.post('/api/bootstrap', async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  try {
+    const result = await pool.query('INSERT INTO users DEFAULT VALUES RETURNING id');
+    await pool.query('INSERT INTO nutrition_profiles (user_id) VALUES ($1)', [result.rows[0].id]);
+    res.status(201).json({ user_id: result.rows[0].id });
+  } catch (error) {
+    console.error('Bootstrap failed:', error.message);
+    res.status(500).json({ error: 'Could not create user' });
   }
 });
 
