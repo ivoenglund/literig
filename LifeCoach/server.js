@@ -41,6 +41,25 @@ app.post('/api/bootstrap', async (_req, res) => {
   }
 });
 
+app.get('/api/summary', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const userId = req.query.user_id;
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS registered_entries,
+              COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_entries,
+              COUNT(*) FILTER (WHERE status = 'estimated')::int AS estimated_entries,
+              COUNT(*) FILTER (WHERE status = 'planned')::int AS planned_entries
+       FROM food_entries WHERE user_id = $1`, [userId]
+    );
+    res.json({ summary: result.rows[0], nutrition_status: 'waiting_for_quantities' });
+  } catch (error) {
+    console.error('Summary query failed:', error.message);
+    res.status(500).json({ error: 'Could not load summary' });
+  }
+});
+
 app.get('/api/entries', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const userId = req.query.user_id;
