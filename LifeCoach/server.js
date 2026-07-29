@@ -41,6 +41,24 @@ app.post('/api/bootstrap', async (_req, res) => {
   }
 });
 
+app.get('/api/foods', async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const result = await pool.query('SELECT id, name, kcal_per_100g, protein_g_per_100g, fiber_g_per_100g, calcium_mg_per_100g, iron_mg_per_100g, source_note FROM food_catalog ORDER BY name');
+  res.json({ foods: result.rows });
+});
+
+app.post('/api/estimate', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const { food_id: foodId, grams } = req.body;
+  const amount = Number(grams);
+  if (!foodId || !Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'food_id and positive grams are required' });
+  const result = await pool.query('SELECT * FROM food_catalog WHERE id = $1', [foodId]);
+  if (!result.rows[0]) return res.status(404).json({ error: 'Food not found' });
+  const f = result.rows[0];
+  const factor = amount / 100;
+  res.json({ basis: 'standardvärde per 100 g', grams: amount, food: f.name, estimated: { kcal: Number(f.kcal_per_100g) * factor, protein_g: Number(f.protein_g_per_100g) * factor, fiber_g: Number(f.fiber_g_per_100g) * factor, calcium_mg: Number(f.calcium_mg_per_100g) * factor, iron_mg: Number(f.iron_mg_per_100g) * factor }, status: 'estimated', note: f.source_note });
+});
+
 app.get('/api/summary', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const userId = req.query.user_id;
