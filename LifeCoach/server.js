@@ -174,6 +174,28 @@ app.put('/api/entries/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: 'Could not update entry' }); }
 });
 
+app.put('/api/recipe-entries/:entryId', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const { user_id: userId, ingredients, update_standard = false } = req.body;
+  if (!userId || !Array.isArray(ingredients)) return res.status(400).json({ error: 'user_id and ingredients are required' });
+  try {
+    const owner = await pool.query('SELECT re.recipe_id FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE re.entry_id=$1 AND fe.user_id=$2', [req.params.entryId, userId]);
+    if (!owner.rows[0]) return res.status(404).json({ error: 'Recipe entry not found' });
+    const recipeId = owner.rows[0].recipe_id;
+    if (update_standard) {
+      await pool.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [recipeId]);
+      for (const [i, item] of ingredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, sort_order) VALUES ($1,$2,$3,$4,$5)', [recipeId, item.name, Number(item.amount), item.unit || 'g', i]);
+    }
+    const estimates = await pool.query(`SELECT name, kcal_per_100g, protein_g_per_100g, fiber_g_per_100g, calcium_mg_per_100g, iron_mg_per_100g FROM food_catalog WHERE name = ANY($1)`, [ingredients.map(i => String(i.name).toLowerCase())]);
+    const byName = Object.fromEntries(estimates.rows.map(f => [f.name, f]));
+    const nutrition = { kcal: 0, protein_g: 0, fiber_g: 0, calcium_mg: 0, iron_mg: 0 };
+    for (const item of ingredients) { const f = byName[String(item.name).toLowerCase()]; const factor = f && item.unit === 'g' ? Number(item.amount) / 100 : 0; if (f) { nutrition.kcal += Number(f.kcal_per_100g) * factor; nutrition.protein_g += Number(f.protein_g_per_100g) * factor; nutrition.fiber_g += Number(f.fiber_g_per_100g) * factor; nutrition.calcium_mg += Number(f.calcium_mg_per_100g) * factor; nutrition.iron_mg += Number(f.iron_mg_per_100g) * factor; } }
+    await pool.query('UPDATE recipe_entries SET ingredients_snapshot=$1, updated_at=now() WHERE entry_id=$2', [JSON.stringify(ingredients), req.params.entryId]);
+    await pool.query('UPDATE food_entries SET nutrition_estimate=$1, quantity_note=$2 WHERE id=$3 AND user_id=$4', [JSON.stringify(nutrition), 'Ingredienser redigerade för denna dag', req.params.entryId, userId]);
+    res.json({ entry_id: req.params.entryId, ingredients, nutrition_estimate: nutrition, standard_updated: update_standard });
+  } catch (error) { console.error('Recipe entry update failed:', error.message); res.status(500).json({ error: 'Could not update recipe entry' }); }
+});
+
 app.post('/api/entries', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { user_id: userId, description, eaten_at: eatenAt, status = 'confirmed', source = 'text', quantity_note: quantityNote = null, nutrition_estimate: nutritionEstimate = null } = req.body;
