@@ -30,7 +30,7 @@ async function calculateSnapshotNutrition(client, snapshot) {
     linked AS (
       SELECT i.*, f.id AS matched_food_id, f.basis_amount
       FROM items i
-      LEFT JOIN foods f ON f.id=i.food_id AND f.basis_unit='g' AND f.status='verified'
+      LEFT JOIN foods f ON f.id=i.food_id AND f.basis_amount=100 AND f.basis_unit='g' AND f.status='verified'
     ),
     calculable AS (SELECT * FROM linked WHERE unit='g' AND amount > 0 AND matched_food_id IS NOT NULL),
     values_by_code AS (
