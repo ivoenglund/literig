@@ -264,7 +264,7 @@ app.post('/api/entries', async (req, res) => {
 
 async function applyNutritionMigrations() {
   if (!pool) return;
-  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql']) {
+  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '004_english_recipes.sql']) {
     const sql = await fs.readFile(path.join(process.cwd(), 'migrations', filename), 'utf8');
     await pool.query(sql);
   }
