@@ -110,16 +110,17 @@ app.get('/api/totals', async (req, res) => {
     const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
     const entries = await pool.query(`SELECT re.ingredients_snapshot FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
     const sums = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
+    const available = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, false]));
     const unresolved = []; let gramIngredients = 0, linkedGramIngredients = 0;
     for (const entry of entries.rows) {
       const calculated = await calculateSnapshotNutrition(pool, entry.ingredients_snapshot);
       gramIngredients += calculated.coverage.gram_ingredients;
       linkedGramIngredients += calculated.coverage.linked_gram_ingredients;
       unresolved.push(...calculated.coverage.unresolved);
-      for (const nutrient of calculated.nutrients) if (nutrient.value != null) sums[nutrient.code] += nutrient.value;
+      for (const nutrient of calculated.nutrients) if (nutrient.value != null) { sums[nutrient.code] += nutrient.value; available[nutrient.code] = true; }
     }
-    const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: sums[code] || null,
-      status: !entries.rows.length ? 'no_recipe_data' : (gramIngredients === linkedGramIngredients ? 'covered' : 'partial_coverage') }));
+    const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code] : null,
+      status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (gramIngredients === linkedGramIngredients ? 'covered' : 'partial_coverage')) }));
     res.json({ date: targetDate, recipe_entries: entries.rows.length, nutrients, coverage: { gram_ingredients: gramIngredients, linked_gram_ingredients: linkedGramIngredients, unresolved }, basis: 'Fineli food_nutrients per 100 g; immutable recipe snapshots only; no supplements' });
   } catch (error) {
     console.error('Totals query failed:', error.message);
