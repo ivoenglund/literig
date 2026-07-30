@@ -66,13 +66,19 @@ app.get('/api/totals', async (req, res) => {
   try {
     const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
     const result = await pool.query(`
-      SELECT COUNT(*) FILTER (WHERE nutrition_estimate IS NOT NULL)::int AS estimated_entries,
-        COALESCE(SUM((nutrition_estimate->>'kcal')::numeric), 0) AS kcal,
-        COALESCE(SUM((nutrition_estimate->>'protein_g')::numeric), 0) AS protein_g,
-        COALESCE(SUM((nutrition_estimate->>'fiber_g')::numeric), 0) AS fiber_g,
-        COALESCE(SUM((nutrition_estimate->>'calcium_mg')::numeric), 0) AS calcium_mg,
-        COALESCE(SUM((nutrition_estimate->>'iron_mg')::numeric), 0) AS iron_mg
-      FROM food_entries WHERE user_id = $1 AND eaten_at::date = $2`, [userId, targetDate]);
+      SELECT COUNT(*) FILTER (WHERE nutrition_estimate IS NOT NULL OR re.ingredients_snapshot IS NOT NULL)::int AS estimated_entries,
+        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'kcal')::numeric, calc.kcal, 0)), 0) AS kcal,
+        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'protein_g')::numeric, calc.protein_g, 0)), 0) AS protein_g,
+        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'fiber_g')::numeric, calc.fiber_g, 0)), 0) AS fiber_g,
+        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'calcium_mg')::numeric, calc.calcium_mg, 0)), 0) AS calcium_mg,
+        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'iron_mg')::numeric, calc.iron_mg, 0)), 0) AS iron_mg
+      FROM food_entries fe
+      LEFT JOIN recipe_entries re ON re.entry_id=fe.id
+      LEFT JOIN LATERAL (
+        SELECT SUM(fc.kcal_per_100g*i.amount/100) AS kcal, SUM(fc.protein_g_per_100g*i.amount/100) AS protein_g, SUM(fc.fiber_g_per_100g*i.amount/100) AS fiber_g, SUM(fc.calcium_mg_per_100g*i.amount/100) AS calcium_mg, SUM(fc.iron_mg_per_100g*i.amount/100) AS iron_mg
+        FROM jsonb_to_recordset(COALESCE(re.ingredients_snapshot, '[]'::jsonb)) AS i(name text, amount numeric, unit text)
+        JOIN food_catalog fc ON lower(fc.name)=lower(i.name) WHERE i.unit='g'
+      ) calc ON true WHERE fe.user_id = $1 AND fe.eaten_at::date = $2`, [userId, targetDate]);
     const averages = await pool.query(`SELECT ROUND(AVG(day_kcal) FILTER (WHERE day_date >= $2::date - INTERVAL '6 days'), 1) AS kcal, ROUND(AVG(day_protein) FILTER (WHERE day_date >= $2::date - INTERVAL '6 days'), 1) AS protein_g, ROUND(AVG(day_fiber) FILTER (WHERE day_date >= $2::date - INTERVAL '6 days'), 1) AS fiber_g, ROUND(AVG(day_kcal), 1) AS kcal_30, ROUND(AVG(day_protein), 1) AS protein_g_30, ROUND(AVG(day_fiber), 1) AS fiber_g_30 FROM (SELECT eaten_at::date AS day_date, COALESCE(SUM((nutrition_estimate->>'kcal')::numeric),0) day_kcal, COALESCE(SUM((nutrition_estimate->>'protein_g')::numeric),0) day_protein, COALESCE(SUM((nutrition_estimate->>'fiber_g')::numeric),0) day_fiber FROM food_entries WHERE user_id=$1 AND eaten_at::date BETWEEN ($2::date - INTERVAL '29 days') AND $2::date GROUP BY eaten_at::date) d`, [userId, targetDate]);
     res.json({ date: targetDate, totals: result.rows[0], averages_7_days: { kcal: averages.rows[0].kcal, protein_g: averages.rows[0].protein_g, fiber_g: averages.rows[0].fiber_g }, averages_30_days: { kcal: averages.rows[0].kcal_30, protein_g: averages.rows[0].protein_g_30, fiber_g: averages.rows[0].fiber_g_30 }, basis: 'registrerade uppskattningar' });
   } catch (error) {
