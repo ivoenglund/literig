@@ -40,27 +40,6 @@ CREATE TABLE IF NOT EXISTS health_events (
 CREATE INDEX IF NOT EXISTS food_entries_user_date_idx ON food_entries(user_id, eaten_at DESC);
 ALTER TABLE food_entries ADD COLUMN IF NOT EXISTS nutrition_estimate JSONB;
 
-CREATE TABLE IF NOT EXISTS food_catalog (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL UNIQUE,
-  kcal_per_100g NUMERIC NOT NULL,
-  protein_g_per_100g NUMERIC NOT NULL DEFAULT 0,
-  fiber_g_per_100g NUMERIC NOT NULL DEFAULT 0,
-  calcium_mg_per_100g NUMERIC NOT NULL DEFAULT 0,
-  iron_mg_per_100g NUMERIC NOT NULL DEFAULT 0,
-  source_note TEXT NOT NULL DEFAULT 'standardvärde; kontrollera mot etikett vid behov',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-INSERT INTO food_catalog (name, kcal_per_100g, protein_g_per_100g, fiber_g_per_100g, calcium_mg_per_100g, iron_mg_per_100g)
-VALUES
-  ('tofu', 144, 17.3, 2.3, 683, 2.7),
-  ('linser, kokta', 116, 9.0, 7.9, 19, 3.3),
-  ('broccoli', 34, 2.8, 2.6, 47, 0.7),
-  ('havregryn', 389, 16.9, 10.6, 54, 4.7),
-  ('potatis, kokt', 87, 1.9, 1.8, 5, 0.3)
-ON CONFLICT (name) DO NOTHING;
-
 CREATE TABLE IF NOT EXISTS recipes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,
