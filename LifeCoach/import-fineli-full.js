@@ -33,7 +33,7 @@ export async function importFullFineli(pool) {
     for (let offset = 0; offset < foods.length; offset += 300) {
       const batch = foods.slice(offset, offset + 300).filter(f => names.get(f.FOODID)?.en);
       const valuesSql = [], args = [];
-      for (const f of batch) { const n = names.get(f.FOODID); const i = args.length; args.push(Number(f.FOODID), n.en, n.sv || null, n.fi || null, f.PROCESS || 'unknown'); valuesSql.push(`($${i+1},$${i+2},$${i+3},$${i+4},$${i+5},100,'g','Fineli / Finnish Institute for Health and Welfare',$${i+1}::text,'verified')`); }
+      for (const f of batch) { const n = names.get(f.FOODID); const i = args.length; args.push(Number(f.FOODID), n.en, n.sv || null, n.fi || null, f.PROCESS || 'unknown'); valuesSql.push(`($${i+1},$${i+2},$${i+3},$${i+4},$${i+5},100,'g','Fineli / Finnish Institute for Health and Welfare','Fineli','verified')`); }
       await client.query(`INSERT INTO foods (fineli_food_id,name,name_sv,name_fi,state,basis_amount,basis_unit,source_name,source_id,status) VALUES ${valuesSql.join(',')} ON CONFLICT (fineli_food_id) DO UPDATE SET name=EXCLUDED.name,name_sv=EXCLUDED.name_sv,name_fi=EXCLUDED.name_fi,state=EXCLUDED.state,status='verified'`, args);
     }
     for (const [code, unit] of componentMap) await client.query(`INSERT INTO nutrients (code,name,unit,category) VALUES ($1,$1,$2,'fineli') ON CONFLICT (code) DO NOTHING`, [code.toLowerCase(), unit]);
