@@ -43,7 +43,7 @@ async function calculateSnapshotNutrition(client, snapshot) {
     SELECT (SELECT count(*)::int FROM items) AS ingredient_count,
       (SELECT count(*)::int FROM linked WHERE unit='g' AND amount > 0) AS gram_ingredient_count,
       (SELECT count(*)::int FROM calculable) AS linked_gram_ingredient_count,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit <> 'g' THEN 'amount is not an explicit gram weight' WHEN amount <= 0 THEN 'amount is not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked Fineli food is unavailable' END) ORDER BY name) FROM linked WHERE unit <> 'g' OR amount <= 0 OR matched_food_id IS NULL), '[]'::jsonb) AS unresolved,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit IS DISTINCT FROM 'g' THEN 'amount is not an explicit gram weight' WHEN amount IS NULL OR amount <= 0 THEN 'amount is missing or not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked Fineli food is unavailable' END) ORDER BY name) FROM linked WHERE unit IS DISTINCT FROM 'g' OR amount IS NULL OR amount <= 0 OR matched_food_id IS NULL), '[]'::jsonb) AS unresolved,
       COALESCE((SELECT jsonb_object_agg(code, jsonb_build_object('total', total, 'supporting_ingredients', supporting_ingredients)) FROM values_by_code), '{}'::jsonb) AS totals
   `, [JSON.stringify(items), DISPLAY_NUTRIENTS.map(([code]) => code)]);
   const row = result.rows[0], raw = row.totals || {};
@@ -296,10 +296,17 @@ app.put('/api/recipe-entries/:entryId', async (req, res) => {
     const owner = await pool.query('SELECT re.recipe_id FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE re.entry_id=$1 AND fe.user_id=$2', [req.params.entryId, userId]);
     if (!owner.rows[0]) return res.status(404).json({ error: 'Recipe entry not found' });
     const recipeId = owner.rows[0].recipe_id;
-    const safeIngredients = await verifiedFineliIngredients(pool, ingredients);
+    const normalizedIngredients = ingredients.map((item) => ({
+      ...item,
+      amount: item.amount === null || item.amount === '' ? null : Number(item.amount),
+      unit: typeof item.unit === 'string' ? item.unit : 'g'
+    }));
+    if (normalizedIngredients.some((item) => !Number.isFinite(item.amount) && item.amount !== null)) return res.status(400).json({ error: 'Ingredient amounts must be numbers or explicitly missing' });
+    const safeIngredients = await verifiedFineliIngredients(pool, normalizedIngredients);
     if (update_standard) {
+      if (safeIngredients.some((item) => item.amount === null || item.amount <= 0)) return res.status(400).json({ error: 'Standard recipes require a positive amount for every ingredient; keep unknown amounts in the day instance instead' });
       await pool.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [recipeId]);
-      for (const [i, item] of safeIngredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, food_id, sort_order) VALUES ($1,$2,$3,$4,$5,$6)', [recipeId, item.name, Number(item.amount), item.unit || 'g', item.food_id || null, i]);
+      for (const [i, item] of safeIngredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, food_id, sort_order) VALUES ($1,$2,$3,$4,$5,$6)', [recipeId, item.name, item.amount, item.unit, item.food_id || null, i]);
     }
     const calculation = await calculateSnapshotNutrition(pool, safeIngredients);
     await pool.query('UPDATE recipe_entries SET ingredients_snapshot=$1, updated_at=now() WHERE entry_id=$2', [JSON.stringify(safeIngredients), req.params.entryId]);
