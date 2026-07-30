@@ -131,7 +131,7 @@ app.get('/api/foods', async (req, res) => {
       SELECT id, name, name_sv, name_fi, state, fineli_food_id, source_name
       FROM foods
       WHERE status='verified' AND basis_amount=100 AND basis_unit='g' AND fineli_food_id IS NOT NULL
-        AND NOT (state IN ('MIX', 'REC', 'DRINK') OR name ~* '(mix|wok|soup|stew|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle|pizza|sandwich|salad|curry|smoothie|juice|drink|beverage|babyfood|filled|cutlet|patty|pastie|pie|pudding|porridge|meal|powder|with salt|with butter|in milk)')
+        AND NOT (state IN ('MIX', 'REC', 'DRINK') OR name ~* '(mix|wok|soup|stew|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle|pizza|sandwich|salad|curry|smoothie|juice|drink|beverage|babyfood|filled|cutlet|patty|pastie|pie|pudding|porridge|meal|powder|chicken|turkey|beef|pork|lamb|fish|sausage|meatball|cereal|cake|cookie|biscuit|chocolate|yogurt|yoghurt|cheese|milk|cream|mayonnaise|dressing|spread|jam|marmalade|sauce|with salt|with butter|in milk)')
         AND NOT EXISTS (
           SELECT 1 FROM unnest($1::text[]) AS token
           WHERE COALESCE(name, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
