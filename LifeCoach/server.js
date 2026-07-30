@@ -26,7 +26,7 @@ const DISPLAY_NUTRIENTS = [
 async function calculateSnapshotNutrition(client, snapshot) {
   const items = Array.isArray(snapshot) ? snapshot : [];
   const result = await client.query(`
-    WITH items AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(name text, amount numeric, unit text, food_id uuid)),
+    WITH items AS (SELECT x.*, ordinality AS item_no FROM jsonb_to_recordset($1::jsonb) WITH ORDINALITY AS x(name text, amount numeric, unit text, food_id uuid)),
     linked AS (
       SELECT i.*, f.id AS matched_food_id, f.basis_amount
       FROM items i
@@ -36,7 +36,7 @@ async function calculateSnapshotNutrition(client, snapshot) {
     values_by_code AS (
       SELECT n.code,
         SUM(fn.value * l.amount / l.basis_amount) AS total,
-        COUNT(*)::int AS supporting_ingredients
+        COUNT(DISTINCT l.item_no)::int AS supporting_ingredients
       FROM calculable l
       JOIN food_nutrients fn ON fn.food_id=l.matched_food_id
       JOIN nutrients n ON n.id=fn.nutrient_id
