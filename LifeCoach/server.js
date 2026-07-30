@@ -30,11 +30,22 @@ async function calculateSnapshotNutrition(client, snapshot) {
     SELECT (SELECT count(*)::int FROM items) AS ingredient_count,
       (SELECT count(*)::int FROM gram_items) AS gram_ingredient_count,
       (SELECT count(*)::int FROM linked WHERE matched_food_id IS NOT NULL) AS linked_gram_ingredient_count,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit <> 'g' THEN 'amount is not an explicit gram weight' WHEN amount <= 0 THEN 'amount is not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked food is unavailable' END)) FROM items WHERE unit <> 'g' OR amount <= 0 OR food_id IS NULL), '[]'::jsonb) AS unresolved,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit <> 'g' THEN 'amount is not an explicit gram weight' WHEN amount <= 0 THEN 'amount is not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked Fineli food is unavailable' END)) FROM linked WHERE unit <> 'g' OR amount <= 0 OR matched_food_id IS NULL), '[]'::jsonb) AS unresolved,
       COALESCE((SELECT jsonb_object_agg(code, total) FROM values_by_code), '{}'::jsonb) AS totals
   `, [JSON.stringify(items), DISPLAY_NUTRIENTS.map(([code]) => code)]);
   const row = result.rows[0], raw = row.totals || {};
   return { nutrients: DISPLAY_NUTRIENTS.map(([code, name, unit, factor]) => ({ code, name, unit, value: raw[code] == null ? null : Number(raw[code]) * factor })), coverage: { ingredients: Number(row.ingredient_count), gram_ingredients: Number(row.gram_ingredient_count), linked_gram_ingredients: Number(row.linked_gram_ingredient_count), unresolved: row.unresolved } };
+}
+
+async function verifiedFineliIngredients(client, ingredients) {
+  // A client may only persist a link after explicitly choosing a current,
+  // verified Fineli 100 g record. Unknown IDs are kept visibly unmatched.
+  const items = Array.isArray(ingredients) ? ingredients : [];
+  const ids = [...new Set(items.map((item) => String(item.food_id || '')).filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))];
+  if (!ids.length) return items.map((item) => ({ ...item, food_id: null }));
+  const result = await client.query(`SELECT id FROM foods WHERE id = ANY($1::uuid[]) AND status='verified' AND fineli_food_id IS NOT NULL AND basis_amount=100 AND basis_unit='g'`, [ids]);
+  const allowed = new Set(result.rows.map((row) => row.id));
+  return items.map((item) => ({ ...item, food_id: allowed.has(item.food_id) ? item.food_id : null }));
 }
 
 app.use((req, res, next) => {
@@ -263,14 +274,15 @@ app.put('/api/recipe-entries/:entryId', async (req, res) => {
     const owner = await pool.query('SELECT re.recipe_id FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE re.entry_id=$1 AND fe.user_id=$2', [req.params.entryId, userId]);
     if (!owner.rows[0]) return res.status(404).json({ error: 'Recipe entry not found' });
     const recipeId = owner.rows[0].recipe_id;
+    const safeIngredients = await verifiedFineliIngredients(pool, ingredients);
     if (update_standard) {
       await pool.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [recipeId]);
-      for (const [i, item] of ingredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, food_id, sort_order) VALUES ($1,$2,$3,$4,$5,$6)', [recipeId, item.name, Number(item.amount), item.unit || 'g', item.food_id || null, i]);
+      for (const [i, item] of safeIngredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, food_id, sort_order) VALUES ($1,$2,$3,$4,$5,$6)', [recipeId, item.name, Number(item.amount), item.unit || 'g', item.food_id || null, i]);
     }
-    const calculation = await calculateSnapshotNutrition(pool, ingredients);
-    await pool.query('UPDATE recipe_entries SET ingredients_snapshot=$1, updated_at=now() WHERE entry_id=$2', [JSON.stringify(ingredients), req.params.entryId]);
+    const calculation = await calculateSnapshotNutrition(pool, safeIngredients);
+    await pool.query('UPDATE recipe_entries SET ingredients_snapshot=$1, updated_at=now() WHERE entry_id=$2', [JSON.stringify(safeIngredients), req.params.entryId]);
     await pool.query('UPDATE food_entries SET nutrition_estimate=$1, quantity_note=$2 WHERE id=$3 AND user_id=$4', [JSON.stringify({ source: 'normalized_foods', coverage: calculation.coverage }), 'Ingredienser redigerade för denna dag', req.params.entryId, userId]);
-    res.json({ entry_id: req.params.entryId, ingredients, nutrition: calculation, standard_updated: update_standard });
+    res.json({ entry_id: req.params.entryId, ingredients: safeIngredients, nutrition: calculation, standard_updated: update_standard });
   } catch (error) { console.error('Recipe entry update failed:', error.message); res.status(500).json({ error: 'Could not update recipe entry' }); }
 });
 
