@@ -225,11 +225,20 @@ app.get('/api/recipes', async (_req, res) => {
 
 app.put('/api/recipes/:id', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  const { instructions } = req.body;
-  if (typeof instructions !== 'string') return res.status(400).json({ error: 'instructions is required' });
-  const result = await pool.query('UPDATE recipes SET instructions=$1 WHERE id=$2 RETURNING id, name, instructions', [instructions.trim(), req.params.id]);
-  if (!result.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
-  res.json({ recipe: result.rows[0] });
+  const { name, instructions, image_url: imageUrl = null, ingredients = [] } = req.body;
+  if (typeof instructions !== 'string' || typeof name !== 'string') return res.status(400).json({ error: 'name and instructions are required' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query('UPDATE recipes SET name=$1,instructions=$2,image_url=$3 WHERE id=$4 RETURNING id,name,instructions,image_url', [name.trim(), instructions.trim(), imageUrl, req.params.id]);
+    if (!result.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Recipe not found' }); }
+    await client.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [req.params.id]);
+    for (const [index, item] of ingredients.entries()) {
+      await client.query('INSERT INTO recipe_ingredients(recipe_id,ingredient_name,amount,unit,sort_order) VALUES($1,$2,$3,$4,$5)', [req.params.id, String(item.name || '').trim(), item.amount == null ? null : Number(item.amount), String(item.unit || 'g').trim(), index]);
+    }
+    await client.query('COMMIT'); res.json({ recipe: result.rows[0] });
+  } catch (error) { await client.query('ROLLBACK'); console.error('Recipe update failed:', error.message); res.status(500).json({ error: 'Could not update recipe' }); }
+  finally { client.release(); }
 });
 
 app.post('/api/recipes/:id/log', async (req, res) => {
