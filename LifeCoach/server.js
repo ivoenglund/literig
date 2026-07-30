@@ -12,12 +12,15 @@ const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
   : null;
 
-// Fineli component codes. ENERC is published in kJ and converted explicitly.
+// Fineli component codes. Energy is published in kJ; ALA in mg. Convert explicitly.
 const DISPLAY_NUTRIENTS = [
-  ['enerc', 'Energy', 'kcal', 1 / 4.184], ['prot', 'Protein', 'g', 1], ['fibc', 'Fiber', 'g', 1],
-  ['ca', 'Calcium', 'mg', 1], ['fe', 'Iron', 'mg', 1], ['vitb12', 'Vitamin B12', 'µg', 1],
-  ['vitd', 'Vitamin D', 'µg', 1], ['id', 'Iodine', 'µg', 1], ['zn', 'Zinc', 'mg', 1],
-  ['se', 'Selenium', 'µg', 1], ['f18:3cn3', 'Omega-3 ALA', 'mg', 1]
+  ['enerc', 'Energy', 'kcal', 1 / 4.184], ['prot', 'Protein', 'g', 1], ['fat', 'Fat', 'g', 1],
+  ['choavl', 'Carbohydrate', 'g', 1], ['fibc', 'Fiber', 'g', 1], ['ca', 'Calcium', 'mg', 1],
+  ['fe', 'Iron', 'mg', 1], ['zn', 'Zinc', 'mg', 1], ['se', 'Selenium', 'µg', 1], ['id', 'Iodine', 'µg', 1],
+  ['fol', 'Folate', 'µg', 1], ['vitc', 'Vitamin C', 'mg', 1], ['vita', 'Vitamin A', 'µg', 1],
+  ['vitk', 'Vitamin K', 'µg', 1], ['vite', 'Vitamin E', 'mg', 1], ['thia', 'Vitamin B1', 'mg', 1],
+  ['ribf', 'Vitamin B2', 'mg', 1], ['niaeq', 'Vitamin B3', 'mg', 1], ['vitpyrid', 'Vitamin B6', 'mg', 1],
+  ['vitb12', 'Vitamin B12', 'µg', 1], ['vitd', 'Vitamin D', 'µg', 1], ['f18d3n3', 'Omega-3 ALA', 'g', 0.001]
 ];
 
 async function calculateSnapshotNutrition(client, snapshot) {
