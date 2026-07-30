@@ -316,7 +316,7 @@ app.put('/api/recipe-entries/:entryId', async (req, res) => {
     }
     const calculation = await calculateSnapshotNutrition(pool, safeIngredients);
     await pool.query('UPDATE recipe_entries SET ingredients_snapshot=$1, updated_at=now() WHERE entry_id=$2', [JSON.stringify(safeIngredients), req.params.entryId]);
-    await pool.query('UPDATE food_entries SET nutrition_estimate=$1, quantity_note=$2 WHERE id=$3 AND user_id=$4', [JSON.stringify({ source: 'normalized_foods', coverage: calculation.coverage }), 'Ingredienser redigerade för denna dag', req.params.entryId, userId]);
+    await pool.query('UPDATE food_entries SET nutrition_estimate=$1, quantity_note=$2 WHERE id=$3 AND user_id=$4', [JSON.stringify({ source: 'normalized_foods', nutrients: calculation.nutrients, coverage: calculation.coverage, basis: 'Fineli food_nutrients per 100 g at edit time' }), 'Ingredienser redigerade för denna dag', req.params.entryId, userId]);
     res.json({ entry_id: req.params.entryId, ingredients: safeIngredients, nutrition: calculation, standard_updated: update_standard });
   } catch (error) { console.error('Recipe entry update failed:', error.message); res.status(500).json({ error: 'Could not update recipe entry' }); }
 });
