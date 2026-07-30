@@ -114,6 +114,15 @@ app.get('/api/recipes', async (_req, res) => {
   res.json({ recipes: result.rows });
 });
 
+app.put('/api/recipes/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const { instructions } = req.body;
+  if (typeof instructions !== 'string') return res.status(400).json({ error: 'instructions is required' });
+  const result = await pool.query('UPDATE recipes SET instructions=$1 WHERE id=$2 RETURNING id, name, instructions', [instructions.trim(), req.params.id]);
+  if (!result.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
+  res.json({ recipe: result.rows[0] });
+});
+
 app.post('/api/recipes/:id/log', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { user_id: userId, eaten_at: eatenAt, note = null } = req.body;
