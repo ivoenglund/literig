@@ -61,4 +61,38 @@ VALUES
   ('potatis, kokt', 87, 1.9, 1.8, 5, 0.3)
 ON CONFLICT (name) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS recipes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  instructions TEXT,
+  servings NUMERIC NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS recipe_ingredients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  recipe_id UUID NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  ingredient_name TEXT NOT NULL,
+  amount NUMERIC NOT NULL,
+  unit TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO recipes (name, description, instructions, servings) VALUES
+('Heavy Metal Smoothie', 'Grön smoothie med spenat, koriander, apelsin och blåbär.', 'Mixa alla ingredienser tills smoothien är slät. Justera vatten efter önskad konsistens.', 1),
+('Linssallad med potatis', 'Mättande sallad med linser, potatis och grönsaker.', 'Blanda kokta linser och potatis med grönsaker och dressing.', 1),
+('Tofu med broccoli och ris', 'Varm vegansk måltid med tofu, broccoli och fullkornsris.', 'Stek tofu, tillsätt broccoli och servera med kokt ris.', 1),
+('Havregrynsfrukost med blåbär', 'Enkel frukost med havregryn och bär.', 'Koka havregryn och toppa med blåbär.', 1)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, sort_order)
+SELECT r.id, x.ingredient_name, x.amount, x.unit, x.sort_order FROM recipes r JOIN (VALUES
+('Heavy Metal Smoothie','spenat',60,'g',1),('Heavy Metal Smoothie','koriander',20,'g',2),('Heavy Metal Smoothie','apelsin',1,'st',3),('Heavy Metal Smoothie','blåbär',100,'g',4),('Heavy Metal Smoothie','banan',1,'st',5),
+('Linssallad med potatis','linser, kokta',180,'g',1),('Linssallad med potatis','potatis, kokt',200,'g',2),('Linssallad med potatis','tomat',100,'g',3),
+('Tofu med broccoli och ris','tofu',150,'g',1),('Tofu med broccoli och ris','broccoli',200,'g',2),('Tofu med broccoli och ris','fullkornsris, kokt',180,'g',3),
+('Havregrynsfrukost med blåbär','havregryn',60,'g',1),('Havregrynsfrukost med blåbär','blåbär',100,'g',2)
+) AS x(recipe_name, ingredient_name, amount, unit, sort_order) ON r.name=x.recipe_name
+WHERE NOT EXISTS (SELECT 1 FROM recipe_ingredients ri WHERE ri.recipe_id=r.id AND ri.ingredient_name=x.ingredient_name);
+
 CREATE INDEX IF NOT EXISTS health_events_user_date_idx ON health_events(user_id, occurred_at DESC);

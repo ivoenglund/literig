@@ -108,6 +108,24 @@ app.post('/api/health-events', async (req, res) => {
   }
 });
 
+app.get('/api/recipes', async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const result = await pool.query(`SELECT r.id, r.name, r.description, r.instructions, r.servings, COALESCE(json_agg(json_build_object('name',ri.ingredient_name,'amount',ri.amount,'unit',ri.unit) ORDER BY ri.sort_order) FILTER (WHERE ri.id IS NOT NULL), '[]') AS ingredients FROM recipes r LEFT JOIN recipe_ingredients ri ON ri.recipe_id=r.id GROUP BY r.id ORDER BY r.name`);
+  res.json({ recipes: result.rows });
+});
+
+app.post('/api/recipes/:id/log', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const { user_id: userId, eaten_at: eatenAt, note = null } = req.body;
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    const recipe = await pool.query('SELECT name FROM recipes WHERE id=$1', [req.params.id]);
+    if (!recipe.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
+    const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4) RETURNING id,eaten_at,description,status,source,quantity_note`, [userId, recipe.rows[0].name, eatenAt || null, note]);
+    res.status(201).json({ entry: result.rows[0] });
+  } catch (error) { res.status(500).json({ error: 'Could not log recipe' }); }
+});
+
 app.get('/api/summary', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const userId = req.query.user_id;
