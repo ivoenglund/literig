@@ -1,8 +1,0 @@
-{
-  "project": "LITERIG Life Coach normalized nutrition upgrade",
-  "percent": 14,
-  "started": true,
-  "completed": false,
-  "last_verified_step": "Recipe-edit API:n normaliserar och sparar nu explicit preparation_state; syntaxkontroll, diff-check samt commit fe1790b och push verifierade",
-  "updated_at": "2026-07-30T11:14:27Z"
-}
