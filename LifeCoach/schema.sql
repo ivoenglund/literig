@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS health_events (
 );
 
 CREATE INDEX IF NOT EXISTS food_entries_user_date_idx ON food_entries(user_id, eaten_at DESC);
+ALTER TABLE food_entries ADD COLUMN IF NOT EXISTS nutrition_estimate JSONB;
+
 CREATE TABLE IF NOT EXISTS food_catalog (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,

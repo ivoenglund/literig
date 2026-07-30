@@ -97,14 +97,14 @@ app.get('/api/entries', async (req, res) => {
 
 app.post('/api/entries', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  const { user_id: userId, description, eaten_at: eatenAt, status = 'confirmed', source = 'text', quantity_note: quantityNote = null } = req.body;
+  const { user_id: userId, description, eaten_at: eatenAt, status = 'confirmed', source = 'text', quantity_note: quantityNote = null, nutrition_estimate: nutritionEstimate = null } = req.body;
   if (!userId || !description) return res.status(400).json({ error: 'user_id and description are required' });
   try {
     const result = await pool.query(
-      `INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note)
-       VALUES ($1, $2, COALESCE($3, now()), $4, $5, $6)
-       RETURNING id, eaten_at, description, status, source, quantity_note`,
-      [userId, description, eatenAt || null, status, source, quantityNote]
+      `INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate)
+       VALUES ($1, $2, COALESCE($3, now()), $4, $5, $6, $7)
+       RETURNING id, eaten_at, description, status, source, quantity_note, nutrition_estimate`,
+      [userId, description, eatenAt || null, status, source, quantityNote, nutritionEstimate]
     );
     res.status(201).json({ entry: result.rows[0] });
   } catch (error) {
