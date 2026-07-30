@@ -134,7 +134,7 @@ app.post('/api/health-events', async (req, res) => {
 
 app.get('/api/recipes', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  const result = await pool.query(`SELECT r.id, r.name, r.description, r.instructions, r.servings, COALESCE(json_agg(json_build_object('name',ri.ingredient_name,'amount',ri.amount,'unit',ri.unit) ORDER BY ri.sort_order) FILTER (WHERE ri.id IS NOT NULL), '[]') AS ingredients FROM recipes r LEFT JOIN recipe_ingredients ri ON ri.recipe_id=r.id GROUP BY r.id ORDER BY r.name`);
+  const result = await pool.query(`SELECT r.id, r.name, r.description, r.instructions, r.servings, COALESCE(json_agg(json_build_object('name',ri.ingredient_name,'amount',ri.amount,'unit',ri.unit,'food_id',ri.food_id) ORDER BY ri.sort_order) FILTER (WHERE ri.id IS NOT NULL), '[]') AS ingredients FROM recipes r LEFT JOIN recipe_ingredients ri ON ri.recipe_id=r.id GROUP BY r.id ORDER BY r.name`);
   res.json({ recipes: result.rows });
 });
 
@@ -264,7 +264,7 @@ app.post('/api/entries', async (req, res) => {
 
 async function applyNutritionMigrations() {
   if (!pool) return;
-  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '004_english_recipes.sql']) {
+  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '004_english_recipes.sql', '005_link_recipe_ingredients_fineli.sql']) {
     const sql = await fs.readFile(path.join(process.cwd(), 'migrations', filename), 'utf8');
     await pool.query(sql);
   }
