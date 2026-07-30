@@ -121,18 +121,26 @@ app.post('/api/bootstrap', async (_req, res) => {
 
 app.get('/api/foods', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  const query = String(req.query.q || '').trim();
-  if (query.length < 2) return res.json({ foods: [], note: 'Search needs at least two characters; no approximate food is selected automatically.' });
+  const query = String(req.query.q || '').trim().replace(/\s+/g, ' ');
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  if (query.length < 2 || !tokens.length) return res.json({ foods: [], note: 'Search needs at least two characters; no approximate food is selected automatically.' });
   try {
+    // Word-boundary tokens prevent a partial word from becoming a proposed basic
+    // ingredient. Prepared dishes and branded drinks are never candidates here.
     const result = await pool.query(`
       SELECT id, name, name_sv, name_fi, state, fineli_food_id, source_name
       FROM foods
       WHERE status='verified' AND basis_amount=100 AND basis_unit='g' AND fineli_food_id IS NOT NULL
-        AND (name ILIKE $1 || '%' OR name_sv ILIKE $1 || '%' OR name_fi ILIKE $1 || '%')
-        AND name !~* '(wok|soup|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle)'
-      ORDER BY CASE WHEN lower(name)=lower($1) THEN 0 ELSE 1 END, name
-      LIMIT 20`, [query]);
-    res.json({ foods: result.rows, note: 'Choose an exact Fineli record and preparation state. Results are not automatically matched.' });
+        AND NOT (state IN ('MIX', 'REC', 'DRINK') OR name ~* '(wok|soup|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle|pizza|sandwich|salad|curry|smoothie|juice|drink|beverage|babyfood|filled|with salt|with butter|in milk)')
+        AND NOT EXISTS (
+          SELECT 1 FROM unnest($1::text[]) AS token
+          WHERE COALESCE(name, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
+            AND COALESCE(name_sv, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
+            AND COALESCE(name_fi, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
+        )
+      ORDER BY CASE WHEN lower(name)=lower($2) THEN 0 WHEN lower(name) LIKE lower($2) || ',%' THEN 1 ELSE 2 END, length(name), name
+      LIMIT 20`, [tokens, query]);
+    res.json({ foods: result.rows, note: 'Choose the exact Fineli record and preparation state yourself. Results are not automatically matched; dishes and drinks are excluded.' });
   } catch (error) {
     console.error('Food search failed:', error.message);
     res.status(500).json({ error: 'Could not search foods' });
