@@ -262,8 +262,7 @@ async function applyNutritionMigrations() {
     await pool.query(sql);
   }
   console.log('Fineli nutrition migrations applied');
-  const result = await importFullFineli(pool);
-  console.log('Full Fineli import complete:', result);
+  // Full Fineli import is intentionally not run at API startup. It must run in resumable batches.
 }
 
 applyNutritionMigrations()
