@@ -64,6 +64,7 @@ app.get('/api/totals', async (req, res) => {
   const userId = req.query.user_id;
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
   try {
+    const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
     const result = await pool.query(`
       SELECT COUNT(*) FILTER (WHERE nutrition_estimate IS NOT NULL)::int AS estimated_entries,
         COALESCE(SUM((nutrition_estimate->>'kcal')::numeric), 0) AS kcal,
@@ -71,8 +72,9 @@ app.get('/api/totals', async (req, res) => {
         COALESCE(SUM((nutrition_estimate->>'fiber_g')::numeric), 0) AS fiber_g,
         COALESCE(SUM((nutrition_estimate->>'calcium_mg')::numeric), 0) AS calcium_mg,
         COALESCE(SUM((nutrition_estimate->>'iron_mg')::numeric), 0) AS iron_mg
-      FROM food_entries WHERE user_id = $1 AND eaten_at::date = CURRENT_DATE`, [userId]);
-    res.json({ totals: result.rows[0], basis: 'registrerade uppskattningar för idag' });
+      FROM food_entries WHERE user_id = $1 AND eaten_at::date = $2`, [userId, targetDate]);
+    const averages = await pool.query(`SELECT ROUND(AVG(day_kcal), 1) AS kcal, ROUND(AVG(day_protein), 1) AS protein_g, ROUND(AVG(day_fiber), 1) AS fiber_g FROM (SELECT eaten_at::date, COALESCE(SUM((nutrition_estimate->>'kcal')::numeric),0) day_kcal, COALESCE(SUM((nutrition_estimate->>'protein_g')::numeric),0) day_protein, COALESCE(SUM((nutrition_estimate->>'fiber_g')::numeric),0) day_fiber FROM food_entries WHERE user_id=$1 AND eaten_at::date BETWEEN ($2::date - INTERVAL '29 days') AND $2::date GROUP BY eaten_at::date) d`, [userId, targetDate]);
+    res.json({ date: targetDate, totals: result.rows[0], averages_30_days: averages.rows[0], basis: 'registrerade uppskattningar' });
   } catch (error) {
     console.error('Totals query failed:', error.message);
     res.status(500).json({ error: 'Could not load totals' });
@@ -129,13 +131,12 @@ app.get('/api/entries', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const userId = req.query.user_id;
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  const date = req.query.date;
+  const params = date ? [userId, date] : [userId];
+  const dateClause = date ? ' AND eaten_at::date = $2' : '';
   try {
-    const result = await pool.query(
-      `SELECT id, eaten_at, description, status, source, quantity_note
-       FROM food_entries WHERE user_id = $1 ORDER BY eaten_at DESC LIMIT 100`,
-      [userId]
-    );
-    res.json({ entries: result.rows });
+    const result = await pool.query(`SELECT id, eaten_at, description, status, source, quantity_note, nutrition_estimate FROM food_entries WHERE user_id = $1${dateClause} ORDER BY eaten_at DESC LIMIT 100`, params);
+    res.json({ entries: result.rows, date: date || null });
   } catch (error) {
     console.error('Entry query failed:', error.message);
     res.status(500).json({ error: 'Could not load entries' });
