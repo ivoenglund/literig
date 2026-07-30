@@ -131,7 +131,11 @@ app.post('/api/recipes/:id/log', async (req, res) => {
     const recipe = await pool.query('SELECT name FROM recipes WHERE id=$1', [req.params.id]);
     if (!recipe.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
     const ingredients = await pool.query(`SELECT ingredient_name AS name, amount, unit FROM recipe_ingredients WHERE recipe_id=$1 ORDER BY sort_order`, [req.params.id]);
-    const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4) RETURNING id,eaten_at,description,status,source,quantity_note`, [userId, recipe.rows[0].name, eatenAt || null, note]);
+    const foodRows = await pool.query(`SELECT name, kcal_per_100g, protein_g_per_100g, fiber_g_per_100g, calcium_mg_per_100g, iron_mg_per_100g FROM food_catalog WHERE name = ANY($1)`, [ingredients.rows.map(i => String(i.name).toLowerCase())]);
+    const foods = Object.fromEntries(foodRows.rows.map(f => [f.name, f]));
+    const nutrition = { kcal: 0, protein_g: 0, fiber_g: 0, calcium_mg: 0, iron_mg: 0 };
+    for (const item of ingredients.rows) { const f = foods[String(item.name).toLowerCase()]; const factor = f && item.unit === 'g' ? Number(item.amount) / 100 : 0; if (f) { nutrition.kcal += Number(f.kcal_per_100g) * factor; nutrition.protein_g += Number(f.protein_g_per_100g) * factor; nutrition.fiber_g += Number(f.fiber_g_per_100g) * factor; nutrition.calcium_mg += Number(f.calcium_mg_per_100g) * factor; nutrition.iron_mg += Number(f.iron_mg_per_100g) * factor; } }
+    const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify(nutrition)]);
     await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot) VALUES ($1,$2,$3)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows)]);
     res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows } });
   } catch (error) { res.status(500).json({ error: 'Could not log recipe' }); }
