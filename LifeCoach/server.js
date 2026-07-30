@@ -24,13 +24,17 @@ async function calculateSnapshotNutrition(client, snapshot) {
   const items = Array.isArray(snapshot) ? snapshot : [];
   const result = await client.query(`
     WITH items AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(name text, amount numeric, unit text, food_id uuid)),
-    gram_items AS (SELECT * FROM items WHERE unit='g' AND amount > 0),
-    linked AS (SELECT i.*, f.id AS matched_food_id, f.basis_amount FROM gram_items i LEFT JOIN foods f ON f.id=i.food_id AND f.basis_unit='g' AND f.status='verified'),
-    values_by_code AS (SELECT n.code, SUM(fn.value * l.amount / l.basis_amount) AS total FROM linked l JOIN food_nutrients fn ON fn.food_id=l.matched_food_id JOIN nutrients n ON n.id=fn.nutrient_id WHERE n.code = ANY($2::text[]) GROUP BY n.code)
+    linked AS (
+      SELECT i.*, f.id AS matched_food_id, f.basis_amount
+      FROM items i
+      LEFT JOIN foods f ON f.id=i.food_id AND f.basis_unit='g' AND f.status='verified'
+    ),
+    calculable AS (SELECT * FROM linked WHERE unit='g' AND amount > 0 AND matched_food_id IS NOT NULL),
+    values_by_code AS (SELECT n.code, SUM(fn.value * l.amount / l.basis_amount) AS total FROM calculable l JOIN food_nutrients fn ON fn.food_id=l.matched_food_id JOIN nutrients n ON n.id=fn.nutrient_id WHERE n.code = ANY($2::text[]) GROUP BY n.code)
     SELECT (SELECT count(*)::int FROM items) AS ingredient_count,
-      (SELECT count(*)::int FROM gram_items) AS gram_ingredient_count,
-      (SELECT count(*)::int FROM linked WHERE matched_food_id IS NOT NULL) AS linked_gram_ingredient_count,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit <> 'g' THEN 'amount is not an explicit gram weight' WHEN amount <= 0 THEN 'amount is not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked Fineli food is unavailable' END)) FROM linked WHERE unit <> 'g' OR amount <= 0 OR matched_food_id IS NULL), '[]'::jsonb) AS unresolved,
+      (SELECT count(*)::int FROM linked WHERE unit='g' AND amount > 0) AS gram_ingredient_count,
+      (SELECT count(*)::int FROM calculable) AS linked_gram_ingredient_count,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit <> 'g' THEN 'amount is not an explicit gram weight' WHEN amount <= 0 THEN 'amount is not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked Fineli food is unavailable' END) ORDER BY name) FROM linked WHERE unit <> 'g' OR amount <= 0 OR matched_food_id IS NULL), '[]'::jsonb) AS unresolved,
       COALESCE((SELECT jsonb_object_agg(code, total) FROM values_by_code), '{}'::jsonb) AS totals
   `, [JSON.stringify(items), DISPLAY_NUTRIENTS.map(([code]) => code)]);
   const row = result.rows[0], raw = row.totals || {};
