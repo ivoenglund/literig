@@ -11,6 +11,31 @@ const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
   : null;
 
+// Fineli component codes. ENERC is published in kJ and converted explicitly.
+const DISPLAY_NUTRIENTS = [
+  ['enerc', 'Energy', 'kcal', 1 / 4.184], ['prot', 'Protein', 'g', 1], ['fibc', 'Fiber', 'g', 1],
+  ['ca', 'Calcium', 'mg', 1], ['fe', 'Iron', 'mg', 1], ['vitb12', 'Vitamin B12', 'µg', 1],
+  ['vitd', 'Vitamin D', 'µg', 1], ['id', 'Iodine', 'µg', 1], ['zn', 'Zinc', 'mg', 1],
+  ['se', 'Selenium', 'µg', 1], ['f18:3cn3', 'Omega-3 ALA', 'mg', 1]
+];
+
+async function calculateSnapshotNutrition(client, snapshot) {
+  const items = Array.isArray(snapshot) ? snapshot : [];
+  const result = await client.query(`
+    WITH items AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(name text, amount numeric, unit text, food_id uuid)),
+    gram_items AS (SELECT * FROM items WHERE unit='g' AND amount > 0),
+    linked AS (SELECT i.*, f.id AS matched_food_id, f.basis_amount FROM gram_items i LEFT JOIN foods f ON f.id=i.food_id AND f.basis_unit='g' AND f.status='verified'),
+    values_by_code AS (SELECT n.code, SUM(fn.value * l.amount / l.basis_amount) AS total FROM linked l JOIN food_nutrients fn ON fn.food_id=l.matched_food_id JOIN nutrients n ON n.id=fn.nutrient_id WHERE n.code = ANY($2::text[]) GROUP BY n.code)
+    SELECT (SELECT count(*)::int FROM items) AS ingredient_count,
+      (SELECT count(*)::int FROM gram_items) AS gram_ingredient_count,
+      (SELECT count(*)::int FROM linked WHERE matched_food_id IS NOT NULL) AS linked_gram_ingredient_count,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit <> 'g' THEN 'amount is not an explicit gram weight' WHEN amount <= 0 THEN 'amount is not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked food is unavailable' END)) FROM items WHERE unit <> 'g' OR amount <= 0 OR food_id IS NULL), '[]'::jsonb) AS unresolved,
+      COALESCE((SELECT jsonb_object_agg(code, total) FROM values_by_code), '{}'::jsonb) AS totals
+  `, [JSON.stringify(items), DISPLAY_NUTRIENTS.map(([code]) => code)]);
+  const row = result.rows[0], raw = row.totals || {};
+  return { nutrients: DISPLAY_NUTRIENTS.map(([code, name, unit, factor]) => ({ code, name, unit, value: raw[code] == null ? null : Number(raw[code]) * factor })), coverage: { ingredients: Number(row.ingredient_count), gram_ingredients: Number(row.gram_ingredient_count), linked_gram_ingredients: Number(row.linked_gram_ingredient_count), unresolved: row.unresolved } };
+}
+
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', 'https://literig.com');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -83,22 +108,19 @@ app.get('/api/totals', async (req, res) => {
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
   try {
     const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
-    const result = await pool.query(`
-      SELECT COUNT(*) FILTER (WHERE nutrition_estimate IS NOT NULL OR re.ingredients_snapshot IS NOT NULL)::int AS estimated_entries,
-        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'kcal')::numeric, calc.kcal, 0)), 0) AS kcal,
-        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'protein_g')::numeric, calc.protein_g, 0)), 0) AS protein_g,
-        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'fiber_g')::numeric, calc.fiber_g, 0)), 0) AS fiber_g,
-        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'calcium_mg')::numeric, calc.calcium_mg, 0)), 0) AS calcium_mg,
-        COALESCE(SUM(COALESCE((fe.nutrition_estimate->>'iron_mg')::numeric, calc.iron_mg, 0)), 0) AS iron_mg
-      FROM food_entries fe
-      LEFT JOIN recipe_entries re ON re.entry_id=fe.id
-      LEFT JOIN LATERAL (
-        SELECT SUM(fc.kcal_per_100g*i.amount/100) AS kcal, SUM(fc.protein_g_per_100g*i.amount/100) AS protein_g, SUM(fc.fiber_g_per_100g*i.amount/100) AS fiber_g, SUM(fc.calcium_mg_per_100g*i.amount/100) AS calcium_mg, SUM(fc.iron_mg_per_100g*i.amount/100) AS iron_mg
-        FROM jsonb_to_recordset(COALESCE(re.ingredients_snapshot, '[]'::jsonb)) AS i(name text, amount numeric, unit text)
-        JOIN food_catalog fc ON lower(fc.name)=lower(i.name) WHERE i.unit='g'
-      ) calc ON true WHERE fe.user_id = $1 AND fe.eaten_at::date = $2`, [userId, targetDate]);
-    const averages = await pool.query(`SELECT ROUND(AVG(day_kcal) FILTER (WHERE day_date >= $2::date - INTERVAL '6 days'), 1) AS kcal, ROUND(AVG(day_protein) FILTER (WHERE day_date >= $2::date - INTERVAL '6 days'), 1) AS protein_g, ROUND(AVG(day_fiber) FILTER (WHERE day_date >= $2::date - INTERVAL '6 days'), 1) AS fiber_g, ROUND(AVG(day_kcal), 1) AS kcal_30, ROUND(AVG(day_protein), 1) AS protein_g_30, ROUND(AVG(day_fiber), 1) AS fiber_g_30 FROM (SELECT eaten_at::date AS day_date, COALESCE(SUM((nutrition_estimate->>'kcal')::numeric),0) day_kcal, COALESCE(SUM((nutrition_estimate->>'protein_g')::numeric),0) day_protein, COALESCE(SUM((nutrition_estimate->>'fiber_g')::numeric),0) day_fiber FROM food_entries WHERE user_id=$1 AND eaten_at::date BETWEEN ($2::date - INTERVAL '29 days') AND $2::date GROUP BY eaten_at::date) d`, [userId, targetDate]);
-    res.json({ date: targetDate, totals: result.rows[0], averages_7_days: { kcal: averages.rows[0].kcal, protein_g: averages.rows[0].protein_g, fiber_g: averages.rows[0].fiber_g }, averages_30_days: { kcal: averages.rows[0].kcal_30, protein_g: averages.rows[0].protein_g_30, fiber_g: averages.rows[0].fiber_g_30 }, basis: 'registrerade uppskattningar' });
+    const entries = await pool.query(`SELECT re.ingredients_snapshot FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
+    const sums = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
+    const unresolved = []; let gramIngredients = 0, linkedGramIngredients = 0;
+    for (const entry of entries.rows) {
+      const calculated = await calculateSnapshotNutrition(pool, entry.ingredients_snapshot);
+      gramIngredients += calculated.coverage.gram_ingredients;
+      linkedGramIngredients += calculated.coverage.linked_gram_ingredients;
+      unresolved.push(...calculated.coverage.unresolved);
+      for (const nutrient of calculated.nutrients) if (nutrient.value != null) sums[nutrient.code] += nutrient.value;
+    }
+    const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: sums[code] || null,
+      status: !entries.rows.length ? 'no_recipe_data' : (gramIngredients === linkedGramIngredients ? 'covered' : 'partial_coverage') }));
+    res.json({ date: targetDate, recipe_entries: entries.rows.length, nutrients, coverage: { gram_ingredients: gramIngredients, linked_gram_ingredients: linkedGramIngredients, unresolved }, basis: 'Fineli food_nutrients per 100 g; immutable recipe snapshots only; no supplements' });
   } catch (error) {
     console.error('Totals query failed:', error.message);
     res.status(500).json({ error: 'Could not load totals' });
@@ -154,14 +176,11 @@ app.post('/api/recipes/:id/log', async (req, res) => {
   try {
     const recipe = await pool.query('SELECT name FROM recipes WHERE id=$1', [req.params.id]);
     if (!recipe.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
-    const ingredients = await pool.query(`SELECT ingredient_name AS name, amount, unit FROM recipe_ingredients WHERE recipe_id=$1 ORDER BY sort_order`, [req.params.id]);
-    const foodRows = await pool.query(`SELECT name, kcal_per_100g, protein_g_per_100g, fiber_g_per_100g, calcium_mg_per_100g, iron_mg_per_100g FROM food_catalog WHERE name = ANY($1)`, [ingredients.rows.map(i => String(i.name).toLowerCase())]);
-    const foods = Object.fromEntries(foodRows.rows.map(f => [f.name, f]));
-    const nutrition = { kcal: 0, protein_g: 0, fiber_g: 0, calcium_mg: 0, iron_mg: 0 };
-    for (const item of ingredients.rows) { const f = foods[String(item.name).toLowerCase()]; const factor = f && item.unit === 'g' ? Number(item.amount) / 100 : 0; if (f) { nutrition.kcal += Number(f.kcal_per_100g) * factor; nutrition.protein_g += Number(f.protein_g_per_100g) * factor; nutrition.fiber_g += Number(f.fiber_g_per_100g) * factor; nutrition.calcium_mg += Number(f.calcium_mg_per_100g) * factor; nutrition.iron_mg += Number(f.iron_mg_per_100g) * factor; } }
-    const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify(nutrition)]);
+    const ingredients = await pool.query(`SELECT ingredient_name AS name, amount, unit, food_id FROM recipe_ingredients WHERE recipe_id=$1 ORDER BY sort_order`, [req.params.id]);
+    const calculation = await calculateSnapshotNutrition(pool, ingredients.rows);
+    const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify({ source: 'normalized_foods', coverage: calculation.coverage })]);
     await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot) VALUES ($1,$2,$3)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows)]);
-    res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows } });
+    res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows, nutrition: calculation } });
   } catch (error) { res.status(500).json({ error: 'Could not log recipe' }); }
 });
 
@@ -232,15 +251,12 @@ app.put('/api/recipe-entries/:entryId', async (req, res) => {
     const recipeId = owner.rows[0].recipe_id;
     if (update_standard) {
       await pool.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [recipeId]);
-      for (const [i, item] of ingredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, sort_order) VALUES ($1,$2,$3,$4,$5)', [recipeId, item.name, Number(item.amount), item.unit || 'g', i]);
+      for (const [i, item] of ingredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, food_id, sort_order) VALUES ($1,$2,$3,$4,$5,$6)', [recipeId, item.name, Number(item.amount), item.unit || 'g', item.food_id || null, i]);
     }
-    const estimates = await pool.query(`SELECT name, kcal_per_100g, protein_g_per_100g, fiber_g_per_100g, calcium_mg_per_100g, iron_mg_per_100g FROM food_catalog WHERE name = ANY($1)`, [ingredients.map(i => String(i.name).toLowerCase())]);
-    const byName = Object.fromEntries(estimates.rows.map(f => [f.name, f]));
-    const nutrition = { kcal: 0, protein_g: 0, fiber_g: 0, calcium_mg: 0, iron_mg: 0 };
-    for (const item of ingredients) { const f = byName[String(item.name).toLowerCase()]; const factor = f && item.unit === 'g' ? Number(item.amount) / 100 : 0; if (f) { nutrition.kcal += Number(f.kcal_per_100g) * factor; nutrition.protein_g += Number(f.protein_g_per_100g) * factor; nutrition.fiber_g += Number(f.fiber_g_per_100g) * factor; nutrition.calcium_mg += Number(f.calcium_mg_per_100g) * factor; nutrition.iron_mg += Number(f.iron_mg_per_100g) * factor; } }
+    const calculation = await calculateSnapshotNutrition(pool, ingredients);
     await pool.query('UPDATE recipe_entries SET ingredients_snapshot=$1, updated_at=now() WHERE entry_id=$2', [JSON.stringify(ingredients), req.params.entryId]);
-    await pool.query('UPDATE food_entries SET nutrition_estimate=$1, quantity_note=$2 WHERE id=$3 AND user_id=$4', [JSON.stringify(nutrition), 'Ingredienser redigerade för denna dag', req.params.entryId, userId]);
-    res.json({ entry_id: req.params.entryId, ingredients, nutrition_estimate: nutrition, standard_updated: update_standard });
+    await pool.query('UPDATE food_entries SET nutrition_estimate=$1, quantity_note=$2 WHERE id=$3 AND user_id=$4', [JSON.stringify({ source: 'normalized_foods', coverage: calculation.coverage }), 'Ingredienser redigerade för denna dag', req.params.entryId, userId]);
+    res.json({ entry_id: req.params.entryId, ingredients, nutrition: calculation, standard_updated: update_standard });
   } catch (error) { console.error('Recipe entry update failed:', error.message); res.status(500).json({ error: 'Could not update recipe entry' }); }
 });
 
@@ -264,7 +280,7 @@ app.post('/api/entries', async (req, res) => {
 
 async function applyNutritionMigrations() {
   if (!pool) return;
-  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '004_english_recipes.sql', '005_link_recipe_ingredients_fineli.sql']) {
+  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '004_english_recipes.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql']) {
     const sql = await fs.readFile(path.join(process.cwd(), 'migrations', filename), 'utf8');
     await pool.query(sql);
   }
