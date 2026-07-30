@@ -11,10 +11,11 @@ from urllib.request import Request, urlopen
 API = "https://fineli.fi/fineli/api/v1"
 # English recipe ingredient -> Fineli search query. Confirmed matches are reviewed in output.
 QUERIES = {
-    "tofu": "tofu", "lentils, cooked": "lentils cooked", "broccoli": "broccoli",
-    "rolled oats": "oats", "potato, boiled": "potato boiled", "spinach": "spinach",
-    "cilantro": "coriander leaves", "orange": "orange", "blueberries": "blueberries",
-    "banana": "banana", "tomato": "tomato", "brown rice, cooked": "brown rice cooked",
+    # target: (Fineli search term, required English words in the candidate name)
+    "tofu": ("tofu", "tofu"), "lentils, cooked": ("linssi", "lentil"), "broccoli": ("parsakaali", "broccoli"),
+    "rolled oats": ("kaurahiutale", "oat"), "potato, boiled": ("peruna", "potato"), "spinach": ("pinaatti", "spinach"),
+    "cilantro": ("korianteri", "coriander"), "orange": ("appelsiini", "orange"), "blueberries": ("mustikka", "blueberr"),
+    "banana": ("banaani", "banana"), "tomato": ("tomaatti", "tomato"), "brown rice, cooked": ("täysjyväriisi", "brown rice"),
 }
 
 def get(path):
@@ -25,9 +26,9 @@ def get(path):
 def english(record):
     return (record.get("name") or {}).get("en") or ""
 
-def choose(query, candidates):
-    # Do not silently accept dishes; choose only raw-food candidates and prefer name overlap.
-    q = query.lower().replace(",", " ").split()
+def choose(required, candidates):
+    # Do not silently accept dishes; choose only raw-food candidates and require a clear English name match.
+    q = required.lower().split()
     foods = [x for x in candidates if (x.get("type") or {}).get("code") == "FOOD"]
     scored = sorted(foods, key=lambda x: sum(token in english(x).lower() for token in q), reverse=True)
     if not scored:
@@ -41,10 +42,10 @@ def main():
     result = {"source": "Fineli API / Finnish Institute for Health and Welfare", "license": "CC BY 4.0", "basis": "100 g", "components": [], "foods": [], "unmatched": []}
     for index, c in enumerate(components):
         result["components"].append({"index": index, "code": c["code"], "name": c["name"].get("en"), "unit": c["unitOfMeasurement"]["abbreviation"].get("en")})
-    for target, query in QUERIES.items():
-        candidate = choose(query, get("/foods?q=" + quote(query)))
+    for target, (search_term, required) in QUERIES.items():
+        candidate = choose(required, get("/foods?q=" + quote(search_term)))
         if not candidate:
-            result["unmatched"].append({"target": target, "query": query})
+            result["unmatched"].append({"target": target, "query": search_term, "required_english": required})
             continue
         detail = get("/foods/" + str(candidate["id"]))
         result["foods"].append({
