@@ -95,4 +95,13 @@ SELECT r.id, x.ingredient_name, x.amount, x.unit, x.sort_order FROM recipes r JO
 ) AS x(recipe_name, ingredient_name, amount, unit, sort_order) ON r.name=x.recipe_name
 WHERE NOT EXISTS (SELECT 1 FROM recipe_ingredients ri WHERE ri.recipe_id=r.id AND ri.ingredient_name=x.ingredient_name);
 
+CREATE TABLE IF NOT EXISTS recipe_entries (
+  entry_id UUID PRIMARY KEY REFERENCES food_entries(id) ON DELETE CASCADE,
+  recipe_id UUID NOT NULL REFERENCES recipes(id) ON DELETE RESTRICT,
+  ingredients_snapshot JSONB NOT NULL DEFAULT '[]',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS recipe_entries_recipe_idx ON recipe_entries(recipe_id);
 CREATE INDEX IF NOT EXISTS health_events_user_date_idx ON health_events(user_id, occurred_at DESC);
+

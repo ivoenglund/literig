@@ -121,8 +121,10 @@ app.post('/api/recipes/:id/log', async (req, res) => {
   try {
     const recipe = await pool.query('SELECT name FROM recipes WHERE id=$1', [req.params.id]);
     if (!recipe.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
+    const ingredients = await pool.query(`SELECT ingredient_name AS name, amount, unit FROM recipe_ingredients WHERE recipe_id=$1 ORDER BY sort_order`, [req.params.id]);
     const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4) RETURNING id,eaten_at,description,status,source,quantity_note`, [userId, recipe.rows[0].name, eatenAt || null, note]);
-    res.status(201).json({ entry: result.rows[0] });
+    await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot) VALUES ($1,$2,$3)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows)]);
+    res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows } });
   } catch (error) { res.status(500).json({ error: 'Could not log recipe' }); }
 });
 
@@ -153,7 +155,7 @@ app.get('/api/entries', async (req, res) => {
   const params = date ? [userId, date] : [userId];
   const dateClause = date ? ' AND eaten_at::date = $2' : '';
   try {
-    const result = await pool.query(`SELECT id, eaten_at, description, status, source, quantity_note, nutrition_estimate FROM food_entries WHERE user_id = $1${dateClause} ORDER BY eaten_at DESC LIMIT 100`, params);
+    const result = await pool.query(`SELECT fe.id, fe.eaten_at, fe.description, fe.status, fe.source, fe.quantity_note, fe.nutrition_estimate, re.recipe_id, re.ingredients_snapshot AS ingredients FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id = $1${dateClause} ORDER BY fe.eaten_at DESC LIMIT 100`, params);
     res.json({ entries: result.rows, date: date || null });
   } catch (error) {
     console.error('Entry query failed:', error.message);
