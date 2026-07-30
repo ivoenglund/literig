@@ -32,6 +32,14 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+app.get('/api/nutrition-catalog-status', async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  try {
+    const result = await pool.query(`SELECT count(*) FILTER (WHERE source_name LIKE 'Fineli%')::int AS fineli_foods, (SELECT count(*)::int FROM nutrients WHERE category='fineli') AS nutrients, (SELECT count(*)::int FROM food_nutrients fn JOIN foods f ON f.id=fn.food_id WHERE f.source_name LIKE 'Fineli%') AS nutrient_values FROM foods`);
+    res.json(result.rows[0]);
+  } catch (error) { res.status(500).json({ error: 'Could not read catalog status' }); }
+});
+
 app.post('/api/bootstrap', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   try {
