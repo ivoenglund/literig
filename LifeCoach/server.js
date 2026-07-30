@@ -143,6 +143,17 @@ app.get('/api/entries', async (req, res) => {
   }
 });
 
+app.put('/api/entries/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const { user_id: userId, description, quantity_note: quantityNote = null } = req.body;
+  if (!userId || !description) return res.status(400).json({ error: 'user_id and description are required' });
+  try {
+    const result = await pool.query(`UPDATE food_entries SET description=$1, quantity_note=$2 WHERE id=$3 AND user_id=$4 RETURNING id, eaten_at, description, status, quantity_note, nutrition_estimate`, [description, quantityNote, req.params.id, userId]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ entry: result.rows[0] });
+  } catch (error) { res.status(500).json({ error: 'Could not update entry' }); }
+});
+
 app.post('/api/entries', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { user_id: userId, description, eaten_at: eatenAt, status = 'confirmed', source = 'text', quantity_note: quantityNote = null, nutrition_estimate: nutritionEstimate = null } = req.body;
