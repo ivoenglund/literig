@@ -2,6 +2,7 @@ import express from 'express';
 import pg from 'pg';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { importFullFineli } from './import-fineli-full.js';
 
 const { Pool } = pg;
 const app = express();
@@ -253,6 +254,8 @@ async function applyNutritionMigrations() {
     await pool.query(sql);
   }
   console.log('Fineli nutrition migrations applied');
+  const result = await importFullFineli(pool);
+  console.log('Full Fineli import complete:', result);
 }
 
 applyNutritionMigrations()
