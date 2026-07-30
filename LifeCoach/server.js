@@ -156,20 +156,21 @@ app.get('/api/totals', async (req, res) => {
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
   try {
     const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
-    const entries = await pool.query(`SELECT re.ingredients_snapshot, fe.nutrition_estimate FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
+    const entries = await pool.query(`SELECT fe.nutrition_estimate, re.ingredients_snapshot FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
     const sums = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const available = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, false]));
     const sourceIngredients = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const unresolved = []; let gramIngredients = 0, linkedGramIngredients = 0;
     for (const entry of entries.rows) {
-      // Logged recipe totals are immutable: never recalculate a past day from
-      // the current catalog after the recipe snapshot has been stored.
-      const snapshot = entry.nutrition_estimate;
-      const coverage = snapshot?.coverage || {};
+      const snapshot = entry.nutrition_estimate || {};
+      const coverage = snapshot.coverage || {};
       gramIngredients += Number(coverage.gram_ingredients || 0);
       linkedGramIngredients += Number(coverage.linked_gram_ingredients || 0);
       unresolved.push(...(Array.isArray(coverage.unresolved) ? coverage.unresolved : []));
-      for (const nutrient of (Array.isArray(snapshot?.nutrients) ? snapshot.nutrients : [])) if (nutrient.value != null) { sums[nutrient.code] += Number(nutrient.value); available[nutrient.code] = true; sourceIngredients[nutrient.code] += Number(nutrient.supporting_ingredients || 0); }
+      const nutrients = Array.isArray(snapshot.nutrients) ? snapshot.nutrients : [
+        ['enerc','kcal'],['prot','protein_g'],['fat','fat_g'],['choavl','carbohydrate_g'],['fibc','fiber_g'],['ca','calcium_mg'],['fe','iron_mg'],['zn','zinc_mg'],['vitc','vitamin_c_mg'],['fol','folate_ug'],['vitb12','vitamin_b12_ug'],['vitd','vitamin_d_ug']
+      ].map(([code,key]) => ({code,value:snapshot[key],supporting_ingredients:1}));
+      for (const nutrient of nutrients) if (nutrient.value != null) { const target=DISPLAY_NUTRIENTS.find(([code])=>code===nutrient.code); if(!target) continue; sums[nutrient.code] += Number(nutrient.value); available[nutrient.code] = true; sourceIngredients[nutrient.code] += Number(nutrient.supporting_ingredients || 1); }
     }
     const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code] : null, source_ingredients: sourceIngredients[code],
       status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (sourceIngredients[code] < linkedGramIngredients || gramIngredients !== linkedGramIngredients ? 'partial_coverage' : 'covered')) }));
