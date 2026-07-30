@@ -79,6 +79,33 @@ app.get('/api/totals', async (req, res) => {
   }
 });
 
+app.get('/api/health-events', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const userId = req.query.user_id;
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    const result = await pool.query(`SELECT id, event_type, occurred_at, value_numeric, unit, note FROM health_events WHERE user_id = $1 ORDER BY occurred_at DESC LIMIT 100`, [userId]);
+    res.json({ events: result.rows });
+  } catch (error) {
+    console.error('Health event query failed:', error.message);
+    res.status(500).json({ error: 'Could not load health events' });
+  }
+});
+
+app.post('/api/health-events', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const { user_id: userId, event_type: eventType, occurred_at: occurredAt, value_numeric: valueNumeric = null, unit = null, note = null } = req.body;
+  const allowed = ['exercise', 'sleep', 'weight', 'measurement', 'note'];
+  if (!userId || !allowed.includes(eventType)) return res.status(400).json({ error: 'user_id and valid event_type are required' });
+  try {
+    const result = await pool.query(`INSERT INTO health_events (user_id, event_type, occurred_at, value_numeric, unit, note) VALUES ($1, $2, COALESCE($3, now()), $4, $5, $6) RETURNING id, event_type, occurred_at, value_numeric, unit, note`, [userId, eventType, occurredAt || null, valueNumeric, unit, note]);
+    res.status(201).json({ event: result.rows[0] });
+  } catch (error) {
+    console.error('Health event insert failed:', error.message);
+    res.status(500).json({ error: 'Could not save health event' });
+  }
+});
+
 app.get('/api/summary', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const userId = req.query.user_id;
