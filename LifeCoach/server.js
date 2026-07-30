@@ -285,6 +285,13 @@ app.put('/api/entries/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: 'Could not update entry' }); }
 });
 
+app.delete('/api/entries/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const userId = req.query.user_id;
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  try { const result = await pool.query('DELETE FROM food_entries WHERE id=$1 AND user_id=$2 RETURNING id', [req.params.id, userId]); if (!result.rows[0]) return res.status(404).json({ error: 'Entry not found' }); res.status(204).end(); }
+  catch (error) { console.error('Entry delete failed:', error.message); res.status(500).json({ error: 'Could not delete entry' }); }
+});
 app.delete('/api/recipe-entries/:entryId', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const userId = req.query.user_id;
