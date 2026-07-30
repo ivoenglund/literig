@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check import-fineli-full.js && python3 -m py_compile scripts/import_fineli.py"
   },
   "dependencies": {
     "express": "^5.1.0",
