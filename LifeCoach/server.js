@@ -249,7 +249,8 @@ app.get('/api/summary', async (req, res) => {
               COUNT(*) FILTER (WHERE status = 'planned')::int AS planned_entries
        FROM food_entries WHERE user_id = $1`, [userId]
     );
-    res.json({ summary: result.rows[0], nutrition_status: 'waiting_for_quantities' });
+    const summary = result.rows[0];
+    res.json({ summary, nutrition_status: Number(summary.confirmed_entries) > 0 ? 'normalized_snapshots_available' : 'waiting_for_quantities' });
   } catch (error) {
     console.error('Summary query failed:', error.message);
     res.status(500).json({ error: 'Could not load summary' });
