@@ -92,8 +92,9 @@ app.get('/api/foods', async (req, res) => {
     const result = await pool.query(`
       SELECT id, name, name_sv, name_fi, state, fineli_food_id, source_name
       FROM foods
-      WHERE status='verified' AND basis_amount=100 AND basis_unit='g'
-        AND (name ILIKE '%' || $1 || '%' OR name_sv ILIKE '%' || $1 || '%' OR name_fi ILIKE '%' || $1 || '%')
+      WHERE status='verified' AND basis_amount=100 AND basis_unit='g' AND fineli_food_id IS NOT NULL
+        AND (name ILIKE $1 || '%' OR name_sv ILIKE $1 || '%' OR name_fi ILIKE $1 || '%')
+        AND name !~* '(wok|soup|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle)'
       ORDER BY CASE WHEN lower(name)=lower($1) THEN 0 ELSE 1 END, name
       LIMIT 20`, [query]);
     res.json({ foods: result.rows, note: 'Choose an exact Fineli record and preparation state. Results are not automatically matched.' });
