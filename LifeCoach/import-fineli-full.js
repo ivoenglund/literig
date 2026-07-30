@@ -43,7 +43,7 @@ export async function importFullFineli(pool, { offset = 0, limit = 25 } = {}) {
       const batch = values.slice(offset, offset + 1000).filter(v => selectedIds.has(v.FOODID) && names.has(v.FOODID) && componentMap.has(v.EUFDNAME) && Number.isFinite(number(v.BESTLOC)));
       const sql = [], args = [];
       for (const v of batch) { const i=args.length; args.push(Number(v.FOODID), v.EUFDNAME.toLowerCase(), number(v.BESTLOC)); sql.push(`($${i+1},$${i+2},$${i+3})`); }
-      if (sql.length) await client.query(`INSERT INTO food_nutrients (food_id,nutrient_id,value,source_name,source_id) SELECT f.id,n.id,x.value,'Fineli / Finnish Institute for Health and Welfare',f.fineli_food_id::text FROM (VALUES ${sql.join(',')}) AS x(fineli_food_id,code,value) JOIN foods f ON f.fineli_food_id=x.fineli_food_id::integer JOIN nutrients n ON n.code=x.code ON CONFLICT (food_id,nutrient_id) DO UPDATE SET value=EXCLUDED.value,source_name=EXCLUDED.source_name,source_id=EXCLUDED.source_id`, args);
+      if (sql.length) await client.query(`INSERT INTO food_nutrients (food_id,nutrient_id,value,source_name,source_id) SELECT f.id,n.id,x.value::numeric,'Fineli / Finnish Institute for Health and Welfare',f.fineli_food_id::text FROM (VALUES ${sql.join(',')}) AS x(fineli_food_id,code,value) JOIN foods f ON f.fineli_food_id=x.fineli_food_id::integer JOIN nutrients n ON n.code=x.code ON CONFLICT (food_id,nutrient_id) DO UPDATE SET value=EXCLUDED.value,source_name=EXCLUDED.source_name,source_id=EXCLUDED.source_id`, args);
     }
     await client.query('COMMIT');
     return { skipped: false, importedFoods: selectedFoods.length, offset, nutrientValues: values.filter(v => selectedIds.has(v.FOODID)).length };
