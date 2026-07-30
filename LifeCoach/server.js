@@ -156,17 +156,20 @@ app.get('/api/totals', async (req, res) => {
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
   try {
     const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
-    const entries = await pool.query(`SELECT re.ingredients_snapshot FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
+    const entries = await pool.query(`SELECT re.ingredients_snapshot, fe.nutrition_estimate FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
     const sums = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const available = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, false]));
     const sourceIngredients = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const unresolved = []; let gramIngredients = 0, linkedGramIngredients = 0;
     for (const entry of entries.rows) {
-      const calculated = await calculateSnapshotNutrition(pool, entry.ingredients_snapshot);
-      gramIngredients += calculated.coverage.gram_ingredients;
-      linkedGramIngredients += calculated.coverage.linked_gram_ingredients;
-      unresolved.push(...calculated.coverage.unresolved);
-      for (const nutrient of calculated.nutrients) if (nutrient.value != null) { sums[nutrient.code] += nutrient.value; available[nutrient.code] = true; sourceIngredients[nutrient.code] += nutrient.supporting_ingredients; }
+      // Logged recipe totals are immutable: never recalculate a past day from
+      // the current catalog after the recipe snapshot has been stored.
+      const snapshot = entry.nutrition_estimate;
+      const coverage = snapshot?.coverage || {};
+      gramIngredients += Number(coverage.gram_ingredients || 0);
+      linkedGramIngredients += Number(coverage.linked_gram_ingredients || 0);
+      unresolved.push(...(Array.isArray(coverage.unresolved) ? coverage.unresolved : []));
+      for (const nutrient of (Array.isArray(snapshot?.nutrients) ? snapshot.nutrients : [])) if (nutrient.value != null) { sums[nutrient.code] += Number(nutrient.value); available[nutrient.code] = true; sourceIngredients[nutrient.code] += Number(nutrient.supporting_ingredients || 0); }
     }
     const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code] : null, source_ingredients: sourceIngredients[code],
       status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (sourceIngredients[code] < linkedGramIngredients || gramIngredients !== linkedGramIngredients ? 'partial_coverage' : 'covered')) }));
@@ -228,7 +231,7 @@ app.post('/api/recipes/:id/log', async (req, res) => {
     if (!recipe.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
     const ingredients = await pool.query(`SELECT ingredient_name AS name, amount, unit, food_id FROM recipe_ingredients WHERE recipe_id=$1 ORDER BY sort_order`, [req.params.id]);
     const calculation = await calculateSnapshotNutrition(pool, ingredients.rows);
-    const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify({ source: 'normalized_foods', coverage: calculation.coverage })]);
+    const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify({ source: 'normalized_foods', nutrients: calculation.nutrients, coverage: calculation.coverage, basis: 'Fineli food_nutrients per 100 g at logging time' })]);
     await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot) VALUES ($1,$2,$3)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows)]);
     res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows, nutrition: calculation } });
   } catch (error) { res.status(500).json({ error: 'Could not log recipe' }); }
