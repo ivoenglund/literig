@@ -1,5 +1,6 @@
 import express from 'express';
 import pg from 'pg';
+import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { importFullFineli } from './import-fineli-full.js';
@@ -65,7 +66,17 @@ app.get('/api/nutrition-catalog-status', async (_req, res) => {
   } catch (error) { res.status(500).json({ error: 'Could not read catalog status' }); }
 });
 
+function importTokenMatches(requestToken) {
+  const configuredToken = process.env.FINELI_IMPORT_TOKEN;
+  if (!configuredToken || typeof requestToken !== 'string') return false;
+  const expected = Buffer.from(configuredToken);
+  const received = Buffer.from(requestToken);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
 app.post('/api/fineli-import-batch', async (req, res) => {
+  // The import operation mutates the catalog, so it is deliberately operator-only.
+  if (!importTokenMatches(req.get('x-fineli-import-token'))) return res.sendStatus(404);
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const offset = Math.max(0, Number(req.body?.offset || 0));
   try { res.json(await importFullFineli(pool, { offset, limit: 25 })); }
