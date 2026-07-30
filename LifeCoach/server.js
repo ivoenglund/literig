@@ -30,15 +30,24 @@ async function calculateSnapshotNutrition(client, snapshot) {
       LEFT JOIN foods f ON f.id=i.food_id AND f.basis_unit='g' AND f.status='verified'
     ),
     calculable AS (SELECT * FROM linked WHERE unit='g' AND amount > 0 AND matched_food_id IS NOT NULL),
-    values_by_code AS (SELECT n.code, SUM(fn.value * l.amount / l.basis_amount) AS total FROM calculable l JOIN food_nutrients fn ON fn.food_id=l.matched_food_id JOIN nutrients n ON n.id=fn.nutrient_id WHERE n.code = ANY($2::text[]) GROUP BY n.code)
+    values_by_code AS (
+      SELECT n.code,
+        SUM(fn.value * l.amount / l.basis_amount) AS total,
+        COUNT(*)::int AS supporting_ingredients
+      FROM calculable l
+      JOIN food_nutrients fn ON fn.food_id=l.matched_food_id
+      JOIN nutrients n ON n.id=fn.nutrient_id
+      WHERE n.code = ANY($2::text[])
+      GROUP BY n.code
+    )
     SELECT (SELECT count(*)::int FROM items) AS ingredient_count,
       (SELECT count(*)::int FROM linked WHERE unit='g' AND amount > 0) AS gram_ingredient_count,
       (SELECT count(*)::int FROM calculable) AS linked_gram_ingredient_count,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'amount',amount,'unit',unit,'reason',CASE WHEN unit <> 'g' THEN 'amount is not an explicit gram weight' WHEN amount <= 0 THEN 'amount is not positive' WHEN food_id IS NULL THEN 'no verified Fineli food link' ELSE 'linked Fineli food is unavailable' END) ORDER BY name) FROM linked WHERE unit <> 'g' OR amount <= 0 OR matched_food_id IS NULL), '[]'::jsonb) AS unresolved,
-      COALESCE((SELECT jsonb_object_agg(code, total) FROM values_by_code), '{}'::jsonb) AS totals
+      COALESCE((SELECT jsonb_object_agg(code, jsonb_build_object('total', total, 'supporting_ingredients', supporting_ingredients)) FROM values_by_code), '{}'::jsonb) AS totals
   `, [JSON.stringify(items), DISPLAY_NUTRIENTS.map(([code]) => code)]);
   const row = result.rows[0], raw = row.totals || {};
-  return { nutrients: DISPLAY_NUTRIENTS.map(([code, name, unit, factor]) => ({ code, name, unit, value: raw[code] == null ? null : Number(raw[code]) * factor })), coverage: { ingredients: Number(row.ingredient_count), gram_ingredients: Number(row.gram_ingredient_count), linked_gram_ingredients: Number(row.linked_gram_ingredient_count), unresolved: row.unresolved } };
+  return { nutrients: DISPLAY_NUTRIENTS.map(([code, name, unit, factor]) => ({ code, name, unit, value: raw[code] == null ? null : Number(raw[code].total) * factor, supporting_ingredients: Number(raw[code]?.supporting_ingredients || 0) })), coverage: { ingredients: Number(row.ingredient_count), gram_ingredients: Number(row.gram_ingredient_count), linked_gram_ingredients: Number(row.linked_gram_ingredient_count), unresolved: row.unresolved } };
 }
 
 async function verifiedFineliIngredients(client, ingredients) {
@@ -139,16 +148,17 @@ app.get('/api/totals', async (req, res) => {
     const entries = await pool.query(`SELECT re.ingredients_snapshot FROM recipe_entries re JOIN food_entries fe ON fe.id=re.entry_id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
     const sums = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const available = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, false]));
+    const sourceIngredients = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const unresolved = []; let gramIngredients = 0, linkedGramIngredients = 0;
     for (const entry of entries.rows) {
       const calculated = await calculateSnapshotNutrition(pool, entry.ingredients_snapshot);
       gramIngredients += calculated.coverage.gram_ingredients;
       linkedGramIngredients += calculated.coverage.linked_gram_ingredients;
       unresolved.push(...calculated.coverage.unresolved);
-      for (const nutrient of calculated.nutrients) if (nutrient.value != null) { sums[nutrient.code] += nutrient.value; available[nutrient.code] = true; }
+      for (const nutrient of calculated.nutrients) if (nutrient.value != null) { sums[nutrient.code] += nutrient.value; available[nutrient.code] = true; sourceIngredients[nutrient.code] += nutrient.supporting_ingredients; }
     }
-    const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code] : null,
-      status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (gramIngredients === linkedGramIngredients ? 'covered' : 'partial_coverage')) }));
+    const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code] : null, source_ingredients: sourceIngredients[code],
+      status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (sourceIngredients[code] < linkedGramIngredients || gramIngredients !== linkedGramIngredients ? 'partial_coverage' : 'covered')) }));
     res.json({ date: targetDate, recipe_entries: entries.rows.length, nutrients, coverage: { gram_ingredients: gramIngredients, linked_gram_ingredients: linkedGramIngredients, unresolved }, basis: 'Fineli food_nutrients per 100 g; immutable recipe snapshots only; no supplements' });
   } catch (error) {
     console.error('Totals query failed:', error.message);
