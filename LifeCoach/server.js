@@ -10,7 +10,7 @@ const pool = process.env.DATABASE_URL
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', 'https://literig.com');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -172,6 +172,17 @@ app.put('/api/entries/:id', async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Entry not found' });
     res.json({ entry: result.rows[0] });
   } catch (error) { res.status(500).json({ error: 'Could not update entry' }); }
+});
+
+app.delete('/api/recipe-entries/:entryId', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const userId = req.query.user_id;
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    const result = await pool.query('DELETE FROM food_entries WHERE id=$1 AND user_id=$2 AND source=\'recipe\' RETURNING id', [req.params.entryId, userId]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Recipe entry not found' });
+    res.status(204).end();
+  } catch (error) { console.error('Recipe entry delete failed:', error.message); res.status(500).json({ error: 'Could not delete recipe entry' }); }
 });
 
 app.put('/api/recipe-entries/:entryId', async (req, res) => {
