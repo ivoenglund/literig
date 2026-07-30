@@ -229,7 +229,7 @@ app.post('/api/recipes/:id/log', async (req, res) => {
   try {
     const recipe = await pool.query('SELECT name FROM recipes WHERE id=$1', [req.params.id]);
     if (!recipe.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
-    const ingredients = await pool.query(`SELECT ri.ingredient_name AS name, ri.amount, ri.unit, ri.food_id, f.state AS food_state, f.basis_amount, f.basis_unit, f.source_name, f.source_id FROM recipe_ingredients ri LEFT JOIN foods f ON f.id=ri.food_id WHERE ri.recipe_id=$1 ORDER BY ri.sort_order`, [req.params.id]);
+    const ingredients = await pool.query(`SELECT ri.ingredient_name AS name, ri.amount, ri.unit, ri.food_id, ri.preparation_state, f.state AS food_state, f.basis_amount, f.basis_unit, f.source_name, f.source_id FROM recipe_ingredients ri LEFT JOIN foods f ON f.id=ri.food_id WHERE ri.recipe_id=$1 ORDER BY ri.sort_order`, [req.params.id]);
     const calculation = await calculateSnapshotNutrition(pool, ingredients.rows);
     const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify({ source: 'normalized_foods', nutrients: calculation.nutrients, coverage: calculation.coverage, basis: 'Fineli food_nutrients per 100 g at logging time' })]);
     await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot) VALUES ($1,$2,$3)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows)]);
