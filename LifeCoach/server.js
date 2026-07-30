@@ -206,7 +206,7 @@ app.post('/api/health-events', async (req, res) => {
 
 app.get('/api/recipes', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  const result = await pool.query(`SELECT r.id, r.name, r.description, r.instructions, r.servings, COALESCE(json_agg(json_build_object('name',ri.ingredient_name,'amount',ri.amount,'unit',ri.unit,'food_id',ri.food_id) ORDER BY ri.sort_order) FILTER (WHERE ri.id IS NOT NULL), '[]') AS ingredients FROM recipes r LEFT JOIN recipe_ingredients ri ON ri.recipe_id=r.id GROUP BY r.id ORDER BY r.name`);
+  const result = await pool.query(`SELECT r.id, r.name, r.description, r.instructions, r.servings, COALESCE(json_agg(json_build_object('name',ri.ingredient_name,'amount',ri.amount,'unit',ri.unit,'food_id',ri.food_id,'state',f.state,'source_name',f.source_name,'fineli_food_id',f.fineli_food_id) ORDER BY ri.sort_order) FILTER (WHERE ri.id IS NOT NULL), '[]') AS ingredients FROM recipes r LEFT JOIN recipe_ingredients ri ON ri.recipe_id=r.id LEFT JOIN foods f ON f.id=ri.food_id GROUP BY r.id ORDER BY r.name`);
   res.json({ recipes: result.rows });
 });
 
