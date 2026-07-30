@@ -306,14 +306,15 @@ app.put('/api/recipe-entries/:entryId', async (req, res) => {
     const normalizedIngredients = ingredients.map((item) => ({
       ...item,
       amount: item.amount === null || item.amount === '' ? null : Number(item.amount),
-      unit: typeof item.unit === 'string' ? item.unit : 'g'
+      unit: typeof item.unit === 'string' ? item.unit : 'g',
+      preparation_state: ['raw', 'cooked', 'dry', 'powdered', 'frozen', 'fortified', 'volume', 'unresolved'].includes(item.preparation_state) ? item.preparation_state : 'unresolved'
     }));
     if (normalizedIngredients.some((item) => !Number.isFinite(item.amount) && item.amount !== null)) return res.status(400).json({ error: 'Ingredient amounts must be numbers or explicitly missing' });
     const safeIngredients = await verifiedFineliIngredients(pool, normalizedIngredients);
     if (update_standard) {
       if (safeIngredients.some((item) => item.amount === null || item.amount <= 0)) return res.status(400).json({ error: 'Standard recipes require a positive amount for every ingredient; keep unknown amounts in the day instance instead' });
       await pool.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [recipeId]);
-      for (const [i, item] of safeIngredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, food_id, sort_order) VALUES ($1,$2,$3,$4,$5,$6)', [recipeId, item.name, item.amount, item.unit, item.food_id || null, i]);
+      for (const [i, item] of safeIngredients.entries()) await pool.query('INSERT INTO recipe_ingredients (recipe_id, ingredient_name, amount, unit, food_id, preparation_state, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7)', [recipeId, item.name, item.amount, item.unit, item.food_id || null, item.preparation_state, i]);
     }
     const calculation = await calculateSnapshotNutrition(pool, safeIngredients);
     await pool.query('UPDATE recipe_entries SET ingredients_snapshot=$1, updated_at=now() WHERE entry_id=$2', [JSON.stringify(safeIngredients), req.params.entryId]);
