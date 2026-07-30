@@ -40,6 +40,13 @@ app.get('/api/nutrition-catalog-status', async (_req, res) => {
   } catch (error) { res.status(500).json({ error: 'Could not read catalog status' }); }
 });
 
+app.post('/api/fineli-import-batch', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const offset = Math.max(0, Number(req.body?.offset || 0));
+  try { res.json(await importFullFineli(pool, { offset, limit: 25 })); }
+  catch (error) { console.error('Fineli batch failed:', error.message); res.status(500).json({ error: 'Fineli batch failed' }); }
+});
+
 app.post('/api/bootstrap', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   try {
