@@ -234,7 +234,7 @@ app.post('/api/recipes/:id/log', async (req, res) => {
     const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify({ source: 'normalized_foods', nutrients: calculation.nutrients, coverage: calculation.coverage, basis: 'Fineli food_nutrients per 100 g at logging time' })]);
     await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot) VALUES ($1,$2,$3)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows)]);
     res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows, nutrition: calculation } });
-  } catch (error) { res.status(500).json({ error: 'Could not log recipe' }); }
+  } catch (error) { console.error('Recipe log failed:', error); res.status(500).json({ error: 'Could not log recipe', detail: error.message }); }
 });
 
 app.get('/api/summary', async (req, res) => {
