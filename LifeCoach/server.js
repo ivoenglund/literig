@@ -59,6 +59,26 @@ app.post('/api/estimate', async (req, res) => {
   res.json({ basis: 'standardvärde per 100 g', grams: amount, food: f.name, estimated: { kcal: Number(f.kcal_per_100g) * factor, protein_g: Number(f.protein_g_per_100g) * factor, fiber_g: Number(f.fiber_g_per_100g) * factor, calcium_mg: Number(f.calcium_mg_per_100g) * factor, iron_mg: Number(f.iron_mg_per_100g) * factor }, status: 'estimated', note: f.source_note });
 });
 
+app.get('/api/totals', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const userId = req.query.user_id;
+  if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    const result = await pool.query(`
+      SELECT COUNT(*) FILTER (WHERE nutrition_estimate IS NOT NULL)::int AS estimated_entries,
+        COALESCE(SUM((nutrition_estimate->>'kcal')::numeric), 0) AS kcal,
+        COALESCE(SUM((nutrition_estimate->>'protein_g')::numeric), 0) AS protein_g,
+        COALESCE(SUM((nutrition_estimate->>'fiber_g')::numeric), 0) AS fiber_g,
+        COALESCE(SUM((nutrition_estimate->>'calcium_mg')::numeric), 0) AS calcium_mg,
+        COALESCE(SUM((nutrition_estimate->>'iron_mg')::numeric), 0) AS iron_mg
+      FROM food_entries WHERE user_id = $1 AND eaten_at::date = CURRENT_DATE`, [userId]);
+    res.json({ totals: result.rows[0], basis: 'registrerade uppskattningar för idag' });
+  } catch (error) {
+    console.error('Totals query failed:', error.message);
+    res.status(500).json({ error: 'Could not load totals' });
+  }
+});
+
 app.get('/api/summary', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const userId = req.query.user_id;
