@@ -35,6 +35,7 @@ function safeGramAmount(amount, unit, gramsPerUnit = null) {
   return factor == null ? null : value * factor;
 }
 function containsReplacementCharacter(value) { return String(value ?? '').includes('\uFFFD'); }
+function storedRecipeAmount(value) { const number = Number(value); return Number.isFinite(number) ? number : 0; }
 
 async function calculateSnapshotNutrition(client, snapshot) {
   const items = Array.isArray(snapshot) ? snapshot : [];
@@ -423,7 +424,7 @@ async function applyNutritionMigrations() {
   if (!pool) return;
   const client = await pool.connect();
   try {
-    for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '010_retire_legacy_food_catalog.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql']) {
+  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '010_retire_legacy_food_catalog.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql']) {
       const sql = await fs.readFile(path.join(process.cwd(), 'migrations', filename), 'utf8');
       await client.query('BEGIN');
       try { await client.query(sql); await client.query('COMMIT'); }
