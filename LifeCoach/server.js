@@ -34,6 +34,7 @@ function safeGramAmount(amount, unit, gramsPerUnit = null) {
   const factor = factors[canonical];
   return factor == null ? null : value * factor;
 }
+function containsReplacementCharacter(value) { return String(value ?? '').includes('\uFFFD'); }
 
 async function calculateSnapshotNutrition(client, snapshot) {
   const items = Array.isArray(snapshot) ? snapshot : [];
@@ -241,6 +242,7 @@ app.put('/api/recipes/:id', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { name, instructions, image_url: imageUrl = null, ingredients = [] } = req.body;
   if (typeof instructions !== 'string' || typeof name !== 'string') return res.status(400).json({ error: 'name and instructions are required' });
+  if ([name, instructions, ...ingredients.flatMap((item) => [item?.name, item?.unit, item?.original_unit])].some(containsReplacementCharacter)) return res.status(400).json({ error: 'Recipe text contains an invalid replacement character; please re-enter the affected text.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
