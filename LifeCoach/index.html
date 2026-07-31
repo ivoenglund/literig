@@ -16,6 +16,12 @@
 .date input{width:128px;text-align:center;padding:6px 8px;background:var(--panel);color:var(--text);border:1px solid var(--accent);border-radius:7px}
 .recipe-card .actions{align-items:center}
 .recipe-card .actions .danger{margin-left:auto}
+.import-ingredients{gap:3px;margin:6px 0 8px}
+.import-row{display:grid;grid-template-columns:90px 75px minmax(180px,1fr);gap:3px;align-items:center}
+.import-row input{padding:5px 7px;border-radius:5px;line-height:1.15;height:31px}
+#import-modal label{display:grid;gap:4px;margin:10px 0}
+#import-modal label input,#import-modal label textarea{width:100%;padding:8px;border-radius:5px;line-height:1.25}
+#import-modal label textarea{min-height:220px;resize:vertical}
 </style>
 </head>
 <body><div class="app"><header class="top"><div class="brand">LITERIG</div><div class="sub">Life Coach · privat prototyp</div><div class="date"><button onclick="shiftDate(-1)">‹</button><span id="selected-date">Idag</span><button onclick="shiftDate(1)">›</button></div><button id="theme-button" onclick="toggleTheme()">Mörkt läge</button><details><summary>Profil · Vegan</summary><div class="profile-menu"><b>Kostprofil</b><label><input type="radio" name="diet" value="vegan"> Vegan</label><label><input type="radio" name="diet" value="vegetarian"> Vegetarian</label><button onclick="saveProfile()">Spara profil</button></div></details></header><main>
@@ -92,4 +98,6 @@ function saveProfile(){const selected=document.querySelector('input[name="diet"]
 function initPreferences(){const diet=localStorage.getItem('literig_diet')||'vegan',theme=localStorage.getItem('literig_theme')||'light';const radio=document.querySelector(`input[name="diet"][value="${diet}"]`);if(radio)radio.checked=true;const summary=document.querySelector('details summary');if(summary)summary.textContent='Settings · '+diet[0].toUpperCase()+diet.slice(1);applyTheme(theme==='light')}
 function setupDashboardControls(){const old=document.getElementById('selected-date');if(old&&old.tagName!=='INPUT'){const input=document.createElement('input');input.id='selected-date';input.type='date';input.value=selectedDate;input.addEventListener('change',()=>selectDate(input.value));input.addEventListener('click',()=>input.showPicker?.());old.replaceWith(input)}const profileCard=document.querySelector('.left .card:first-child');if(profileCard)profileCard.remove();const details=document.querySelector('details');if(details){const title=details.querySelector('.profile-menu b');if(title)title.textContent='Settings';const button=details.querySelector('button');if(button)button.textContent='Save settings'}}
 setupDashboardControls();labelDate();
+function arrangeImportModal(){const box=document.querySelector('#import-modal .import-modal-box'),url=document.getElementById('import-image'),actions=box?.querySelector('.recipe-modal-actions'),close=box?.querySelector('.modal-close');if(!box||!url||!actions||!close)return;if(!actions.contains(close))actions.appendChild(close);const urlLabel=url.closest('label');if(urlLabel&&urlLabel.nextElementSibling!==actions)box.insertBefore(actions,urlLabel.nextSibling)}
+arrangeImportModal();
 </script></body></html>
