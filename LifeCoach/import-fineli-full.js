@@ -58,7 +58,7 @@ export async function getFineliCatalogStatus(pool) {
     WITH fineli_foods AS (
       SELECT DISTINCT ON (fineli_food_id) id, fineli_food_id
       FROM foods
-      WHERE source_name LIKE 'Fineli%'
+      WHERE source_name LIKE 'Fineli%' AND fineli_food_id IS NOT NULL
       ORDER BY fineli_food_id, id
     )
     SELECT
