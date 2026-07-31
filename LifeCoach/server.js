@@ -3,7 +3,7 @@ import pg from 'pg';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { importFullFineli } from './import-fineli-full.js';
+import { getFineliCatalogStatus, importFullFineli } from './import-fineli-full.js';
 
 const { Pool } = pg;
 const app = express();
@@ -100,10 +100,8 @@ app.get('/api/health', async (_req, res) => {
 
 app.get('/api/nutrition-catalog-status', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  try {
-    const result = await pool.query(`SELECT count(*) FILTER (WHERE source_name LIKE 'Fineli%')::int AS fineli_foods, (SELECT count(*)::int FROM nutrients WHERE category='fineli') AS nutrients, (SELECT count(*)::int FROM food_nutrients fn JOIN foods f ON f.id=fn.food_id WHERE f.source_name LIKE 'Fineli%') AS nutrient_values FROM foods`);
-    res.json(result.rows[0]);
-  } catch (error) { res.status(500).json({ error: 'Could not read catalog status' }); }
+  try { res.json(await getFineliCatalogStatus(pool)); }
+  catch (error) { console.error('Catalog status failed:', error.message); res.status(500).json({ error: 'Could not read catalog status' }); }
 });
 
 function importTokenMatches(requestToken) {
@@ -381,7 +379,7 @@ app.post('/api/entries', async (req, res) => {
 
 async function applyNutritionMigrations() {
   if (!pool) return;
-  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '010_retire_legacy_food_catalog.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql']) {
+  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '010_retire_legacy_food_catalog.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql']) {
     const sql = await fs.readFile(path.join(process.cwd(), 'migrations', filename), 'utf8');
     await pool.query(sql);
   }
