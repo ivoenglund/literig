@@ -23,9 +23,10 @@ const DISPLAY_NUTRIENTS = [
   ['vitb12', 'Vitamin B12', 'µg', 1], ['vitd', 'Vitamin D', 'µg', 1], ['f18d3n3', 'Omega-3 ALA', 'g', 0.001]
 ];
 
-function safeGramAmount(amount, unit) {
+function safeGramAmount(amount, unit, gramsPerUnit = null) {
   const value = Number(amount);
   if (!Number.isFinite(value)) return null;
+  if (Number.isFinite(Number(gramsPerUnit)) && Number(gramsPerUnit) > 0) return value * Number(gramsPerUnit);
   const aliases = { milligram: 'mg', milligrams: 'mg', milligramm: 'mg', milligram: 'mg', gram: 'g', grams: 'g', grammer: 'g', kilogram: 'kg', kilograms: 'kg', kilo: 'kg', hekto: 'hg', hektogram: 'hg' };
   const normalized = String(unit || '').trim().toLowerCase();
   const canonical = aliases[normalized] || normalized;
@@ -247,7 +248,7 @@ app.put('/api/recipes/:id', async (req, res) => {
     if (!result.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Recipe not found' }); }
     await client.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [req.params.id]);
     for (const [index, item] of ingredients.entries()) {
-      const amount = item.amount == null ? null : Number(item.amount); const unit = String(item.unit || 'g').trim(); const amountGrams = item.amount_grams == null ? safeGramAmount(amount, unit) : Number(item.amount_grams);
+      const amount = item.amount == null ? null : Number(item.amount); const unit = String(item.unit || 'g').trim(); const amountGrams = item.amount_grams == null ? safeGramAmount(amount, unit, item.grams_per_unit) : Number(item.amount_grams);
       await client.query('INSERT INTO recipe_ingredients(recipe_id,ingredient_name,amount,unit,original_amount,original_unit,amount_grams,sort_order) VALUES($1,$2,$3,$4,$5,$6,$7,$8)', [req.params.id, String(item.name || '').trim(), amount, unit, item.original_amount == null ? amount : Number(item.original_amount), item.original_unit || unit, amountGrams, index]);
     }
     await client.query('COMMIT'); res.json({ recipe: result.rows[0] });
@@ -355,7 +356,7 @@ app.put('/api/recipe-entries/:entryId', async (req, res) => {
       ...item,
       amount: item.amount === null || item.amount === '' ? null : Number(item.amount),
       unit: typeof item.unit === 'string' ? item.unit : 'g',
-      amount_grams: item.amount_grams === null || item.amount_grams === '' || item.amount_grams == null ? safeGramAmount(item.amount, item.unit) : Number(item.amount_grams),
+      amount_grams: item.amount_grams === null || item.amount_grams === '' || item.amount_grams == null ? safeGramAmount(item.amount, item.unit, item.grams_per_unit) : Number(item.amount_grams),
       original_amount: item.original_amount == null ? (item.amount === null || item.amount === '' ? null : Number(item.amount)) : Number(item.original_amount),
       original_unit: typeof item.original_unit === 'string' ? item.original_unit : (typeof item.unit === 'string' ? item.unit : 'g'),
       preparation_state: ['raw', 'cooked', 'dry', 'powdered', 'frozen', 'fortified', 'volume', 'unresolved'].includes(item.preparation_state) ? item.preparation_state : 'unresolved'
