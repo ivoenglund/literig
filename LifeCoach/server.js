@@ -102,8 +102,8 @@ app.post('/api/text-entry/interpret', async (req,res)=>{const text=String(req.bo
 app.get('/api/health', async (_req, res) => {
   if (!pool) return res.status(503).json({ ok: false, database: 'not configured' });
   try {
-    await pool.query('SELECT 1');
-    res.json({ ok: true, database: 'connected' });
+    const encoding = await pool.query("SELECT current_setting('server_encoding') AS server_encoding, current_setting('client_encoding') AS client_encoding");
+    res.json({ ok: true, database: 'connected', encoding: encoding.rows[0] });
   } catch (error) {
     console.error('Database health check failed:', error.message);
     res.status(503).json({ ok: false, database: 'unavailable' });
