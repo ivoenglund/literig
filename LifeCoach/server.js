@@ -238,6 +238,14 @@ app.get('/api/recipes', async (_req, res) => {
   res.json({ recipes: result.rows });
 });
 
+app.get('/api/recipes-delete-status', async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  try {
+    const result = await pool.query(`SELECT r.id, r.name, COUNT(re.entry_id)::int AS logged_entry_count FROM recipes r LEFT JOIN recipe_entries re ON re.recipe_id=r.id GROUP BY r.id ORDER BY r.name`);
+    res.json({ recipes: result.rows });
+  } catch (error) { console.error('Recipe delete status failed:', error.message); res.status(500).json({ error: 'Could not read recipe delete status' }); }
+});
+
 app.put('/api/recipes/:id', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { name, instructions, image_url: imageUrl = null, ingredients = [] } = req.body;
@@ -263,6 +271,7 @@ app.delete('/api/recipes/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('DELETE FROM recipe_entries re WHERE re.recipe_id=$1 AND NOT EXISTS (SELECT 1 FROM food_entries fe WHERE fe.id=re.entry_id)', [req.params.id]);
     const linked = await client.query('SELECT 1 FROM recipe_entries WHERE recipe_id=$1 LIMIT 1', [req.params.id]);
     if (linked.rows[0]) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Recipe has logged food entries and cannot be deleted.' }); }
     const deleted = await client.query('DELETE FROM recipes WHERE id=$1 RETURNING id', [req.params.id]);
