@@ -258,6 +258,21 @@ app.put('/api/recipes/:id', async (req, res) => {
   finally { client.release(); }
 });
 
+app.delete('/api/recipes/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const linked = await client.query('SELECT 1 FROM recipe_entries WHERE recipe_id=$1 LIMIT 1', [req.params.id]);
+    if (linked.rows[0]) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Recipe has logged food entries and cannot be deleted.' }); }
+    const deleted = await client.query('DELETE FROM recipes WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!deleted.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Recipe not found' }); }
+    await client.query('COMMIT');
+    res.json({ deleted: true, id: req.params.id });
+  } catch (error) { await client.query('ROLLBACK'); console.error('Recipe delete failed:', error.message); res.status(500).json({ error: 'Could not delete recipe' }); }
+  finally { client.release(); }
+});
+
 app.post('/api/recipes/:id/log', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { user_id: userId, eaten_at: eatenAt, note = null } = req.body;
