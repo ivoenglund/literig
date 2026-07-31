@@ -86,6 +86,14 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '1mb' }));
+app.use('/api/recipe-import/approve', (req, _res, next) => {
+  if (req.method === 'POST' && Array.isArray(req.body?.preview?.ingredients)) {
+    const units = /^(kg|hg|g|mg|dl|cl|ml|l|msk|tsk|krm|st|portion|portions)$/i;
+    const parseAmount = (value) => { const text = String(value ?? '').trim().replace(',', '.'); if (/^\d+\s*\/\s*\d+$/.test(text)) { const [a, b] = text.split('/').map(Number); return b ? a / b : null; } const number = Number(text); return Number.isFinite(number) ? number : null; };
+    req.body.preview.ingredients = req.body.preview.ingredients.map((item) => { const amount = parseAmount(item.amount ?? item.original_amount); const rawUnit = String(item.original_unit ?? item.unit ?? '').trim(); const unit = units.test(rawUnit) ? rawUnit : 'unresolved'; const grams = Number(item.amount_grams); return { ...item, amount, unit, original_amount: amount, original_unit: rawUnit || 'unresolved', amount_grams: Number.isFinite(grams) ? grams : null }; });
+  }
+  next();
+});
 app.use(express.static('.'));
 
 function stripHtml(html){return html.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/\s+/g,' ').trim().slice(0,50000)}
