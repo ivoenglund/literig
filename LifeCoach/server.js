@@ -271,8 +271,6 @@ app.delete('/api/recipes/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const approvedCleanupIds = new Set(['f25f267b-811c-4a4c-ae92-b10cd8e8aba4', 'd6a317d9-c291-431c-b4cb-729611582ca1', '638c30ff-f1c6-4fdb-ae6f-cf8ea040b6d4', 'c551a6a2-5f79-4596-8fb5-4505fe02778e']);
-    if (approvedCleanupIds.has(req.params.id) && req.query.force === 'true') await client.query('DELETE FROM food_entries WHERE id IN (SELECT entry_id FROM recipe_entries WHERE recipe_id=$1)', [req.params.id]);
     await client.query('DELETE FROM recipe_entries re WHERE re.recipe_id=$1 AND NOT EXISTS (SELECT 1 FROM food_entries fe WHERE fe.id=re.entry_id)', [req.params.id]);
     const linked = await client.query('SELECT 1 FROM recipe_entries WHERE recipe_id=$1 LIMIT 1', [req.params.id]);
     if (linked.rows[0]) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Recipe has logged food entries and cannot be deleted.' }); }
