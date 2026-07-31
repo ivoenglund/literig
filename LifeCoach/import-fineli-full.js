@@ -55,15 +55,20 @@ export async function getFineliCatalogStatus(pool) {
   const catalog = await getFineliCatalog();
   const currentCodes = [...catalog.componentUnits.keys()].map((code) => code.toLowerCase());
   const result = await pool.query(`
+    WITH fineli_foods AS (
+      SELECT DISTINCT ON (fineli_food_id) id, fineli_food_id
+      FROM foods
+      WHERE source_name LIKE 'Fineli%'
+      ORDER BY fineli_food_id, id
+    )
     SELECT
-      count(*) FILTER (WHERE source_name LIKE 'Fineli%')::int AS foods,
+      (SELECT count(*)::int FROM fineli_foods) AS foods,
       (SELECT count(*)::int FROM nutrients WHERE code = ANY($1::text[])) AS nutrients,
       (SELECT count(*)::int
        FROM food_nutrients fn
-       JOIN foods f ON f.id=fn.food_id
+       JOIN fineli_foods f ON f.id=fn.food_id
        JOIN nutrients n ON n.id=fn.nutrient_id
-       WHERE f.source_name LIKE 'Fineli%' AND n.code = ANY($1::text[])) AS nutrient_values
-    FROM foods
+       WHERE n.code = ANY($1::text[])) AS nutrient_values
   `, [currentCodes]);
   const actual = result.rows[0];
   return {
