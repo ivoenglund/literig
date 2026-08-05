@@ -12,9 +12,9 @@ const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
   : null;
 
-// Fineli component codes. Energy is published in kJ; ALA in mg. Convert explicitly.
+// Fineli stores ENERC in kJ and the importer stores the separately-derived kcal row.
 const DISPLAY_NUTRIENTS = [
-  ['enerc', 'Energy', 'kcal', 1 / 4.184], ['prot', 'Protein', 'g', 1], ['fat', 'Fat', 'g', 1],
+  ['energy_kcal', 'Energy', 'kcal', 1], ['prot', 'Protein', 'g', 1], ['fat', 'Fat', 'g', 1],
   ['choavl', 'Carbohydrate', 'g', 1], ['fibc', 'Fiber', 'g', 1], ['ca', 'Calcium', 'mg', 1],
   ['fe', 'Iron', 'mg', 1], ['zn', 'Zinc', 'mg', 1], ['se', 'Selenium', 'µg', 1], ['id', 'Iodine', 'µg', 1],
   ['fol', 'Folate', 'µg', 1], ['vitc', 'Vitamin C', 'mg', 1], ['vita', 'Vitamin A', 'µg', 1],
@@ -164,7 +164,7 @@ app.get('/api/foods', async (req, res) => {
     // Word-boundary tokens prevent a partial word from becoming a proposed basic
     // ingredient. Prepared dishes and branded drinks are never candidates here.
     const result = await pool.query(`
-      SELECT id, name, name_sv, name_fi, state, fineli_food_id, source_name
+      SELECT id, COALESCE(display_name,name) AS name, name AS raw_name, display_name, name_sv, name_fi, state, fineli_food_id, source_name
       FROM foods
       WHERE status='verified' AND basis_amount=100 AND basis_unit='g' AND fineli_food_id IS NOT NULL
         AND NOT (state IN ('MIX', 'REC', 'DRINK') OR name ~* '(mix|wok|soup|stew|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle|pizza|sandwich|salad|curry|smoothie|juice|drink|beverage|babyfood|filled|cutlet|patty|pastie|pie|pudding|porridge|meal|powder|chicken|turkey|beef|pork|lamb|fish|sausage|meatball|cereal|cake|cookie|biscuit|chocolate|yogurt|yoghurt|cheese|milk|cream|mayonnaise|dressing|spread|jam|marmalade|sauce|with salt|with butter|in milk)')
@@ -174,7 +174,7 @@ app.get('/api/foods', async (req, res) => {
             AND COALESCE(name_sv, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
             AND COALESCE(name_fi, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
         )
-      ORDER BY CASE WHEN lower(name)=lower($2) THEN 0 WHEN lower(name) LIKE lower($2) || ',%' THEN 1 ELSE 2 END, length(name), name
+      ORDER BY CASE WHEN lower(name)=lower($2) THEN 0 WHEN lower(name) LIKE lower($2) || ',%' THEN 1 ELSE 2 END, length(COALESCE(display_name,name)), name
       LIMIT 20`, [tokens, query]);
     res.json({ foods: result.rows, note: 'Choose the exact Fineli record and preparation state yourself. Results are not automatically matched; dishes and drinks are excluded.' });
   } catch (error) {
@@ -201,9 +201,9 @@ app.get('/api/totals', async (req, res) => {
       linkedGramIngredients += Number(coverage.linked_gram_ingredients || 0);
       unresolved.push(...(Array.isArray(coverage.unresolved) ? coverage.unresolved : []));
       const nutrients = Array.isArray(snapshot.nutrients) ? snapshot.nutrients : [
-        ['enerc','kcal'],['prot','protein_g'],['fat','fat_g'],['choavl','carbohydrate_g'],['fibc','fiber_g'],['ca','calcium_mg'],['fe','iron_mg'],['zn','zinc_mg'],['vitc','vitamin_c_mg'],['fol','folate_ug'],['vitb12','vitamin_b12_ug'],['vitd','vitamin_d_ug']
+        ['energy_kcal','kcal'],['prot','protein_g'],['fat','fat_g'],['choavl','carbohydrate_g'],['fibc','fiber_g'],['ca','calcium_mg'],['fe','iron_mg'],['zn','zinc_mg'],['vitc','vitamin_c_mg'],['fol','folate_ug'],['vitb12','vitamin_b12_ug'],['vitd','vitamin_d_ug']
       ].map(([code,key]) => ({code,value:snapshot[key],supporting_ingredients:1}));
-      for (const nutrient of nutrients) if (nutrient.value != null) { const target=DISPLAY_NUTRIENTS.find(([code])=>code===nutrient.code); if(!target) continue; sums[nutrient.code] += Number(nutrient.value); available[nutrient.code] = true; sourceIngredients[nutrient.code] += Number(nutrient.supporting_ingredients || 1); }
+      for (const nutrient of nutrients) if (nutrient.value != null) { const code = nutrient.code === 'enerc' ? 'energy_kcal' : nutrient.code; const target=DISPLAY_NUTRIENTS.find(([candidate])=>candidate===code); if(!target) continue; sums[code] += Number(nutrient.value); available[code] = true; sourceIngredients[code] += Number(nutrient.supporting_ingredients || 1); }
     }
     const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code] : null, source_ingredients: sourceIngredients[code],
       status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (sourceIngredients[code] < linkedGramIngredients || gramIngredients !== linkedGramIngredients ? 'partial_coverage' : 'covered')) }));
@@ -432,10 +432,17 @@ async function applyNutritionMigrations() {
   if (!pool) return;
   const client = await pool.connect();
   try {
-  for (const filename of ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '010_retire_legacy_food_catalog.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql']) {
+    const filenames = ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql', '017_retire_legacy_food_catalog.sql', '018_nutrition_data_repair.sql'];
+    await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
+    // Older deployments predate migration tracking. The presence of the last pre-repair
+    // table is their durable application record, so baseline them instead of replaying.
+    const legacyApplied = (await client.query(`SELECT to_regclass('public.nutrition_catalog_import_runs') IS NOT NULL AS applied`)).rows[0].applied;
+    if (legacyApplied) await client.query(`INSERT INTO schema_migrations(filename) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING`, [filenames.slice(0, -1)]);
+    for (const filename of filenames) {
+      if ((await client.query('SELECT 1 FROM schema_migrations WHERE filename=$1', [filename])).rowCount) continue;
       const sql = await fs.readFile(path.join(process.cwd(), 'migrations', filename), 'utf8');
       await client.query('BEGIN');
-      try { await client.query(sql); await client.query('COMMIT'); }
+      try { await client.query(sql); await client.query('INSERT INTO schema_migrations(filename) VALUES($1)', [filename]); await client.query('COMMIT'); }
       catch (error) { await client.query('ROLLBACK'); throw new Error(`${filename}: ${error.message}`); }
     }
     console.log('Fineli nutrition migrations applied');
