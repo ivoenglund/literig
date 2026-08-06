@@ -34,6 +34,25 @@ function safeGramAmount(amount, unit, gramsPerUnit = null) {
   const factor = factors[canonical];
   return factor == null ? null : value * factor;
 }
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(String(value).trim().replace(',', '.'));
+  return Number.isFinite(number) ? number : null;
+}
+function normalizeIngredient(item = {}) {
+  const amount = numberOrNull(item.amount);
+  const unit = String(item.unit || item.original_unit || 'g').trim();
+  const originalAmount = numberOrNull(item.original_amount);
+  const requestedGrams = numberOrNull(item.amount_grams);
+  return {
+    name: String(item.name || '').trim(), amount, unit,
+    original_amount: originalAmount == null ? amount : originalAmount,
+    original_unit: String(item.original_unit || unit).trim(),
+    amount_grams: requestedGrams == null ? safeGramAmount(amount, unit, item.grams_per_unit) : requestedGrams,
+    food_id: item.food_id || null,
+    preparation_state: ['raw', 'cooked', 'dry', 'powdered', 'frozen', 'fortified', 'volume', 'unresolved'].includes(item.preparation_state) ? item.preparation_state : 'unresolved'
+  };
+}
 function containsReplacementCharacter(value) { return String(value ?? '').includes('\uFFFD'); }
 function storedRecipeAmount(value) { const number = Number(value); return Number.isFinite(number) ? number : 0; }
 
@@ -279,8 +298,11 @@ app.put('/api/recipes/:id', async (req, res) => {
     if (!result.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Recipe not found' }); }
     await client.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [req.params.id]);
     for (const [index, item] of ingredients.entries()) {
-      const amount = item.amount == null ? null : Number(item.amount); const unit = String(item.unit || 'g').trim(); const amountGrams = item.amount_grams == null ? safeGramAmount(amount, unit, item.grams_per_unit) : Number(item.amount_grams);
-      await client.query('INSERT INTO recipe_ingredients(recipe_id,ingredient_name,amount,unit,original_amount,original_unit,amount_grams,sort_order) VALUES($1,$2,$3,$4,$5,$6,$7,$8)', [req.params.id, String(item.name || '').trim(), amount, unit, item.original_amount == null ? amount : Number(item.original_amount), item.original_unit || unit, amountGrams, index]);
+      const amount = numberOrNull(item.amount); const unit = String(item.unit || item.original_unit || 'g').trim(); const amountGrams = item.amount_grams == null || item.amount_grams === '' ? safeGramAmount(amount, unit, item.grams_per_unit) : numberOrNull(item.amount_grams);
+      const originalAmount = numberOrNull(item.original_amount);
+      /* Only retain a food id when it is a verified Fineli 100 g record. */
+      const food = await client.query("SELECT id FROM foods WHERE id=$1 AND status='verified' AND fineli_food_id IS NOT NULL AND basis_amount=100 AND basis_unit='g'", [item.food_id || null]);
+      await client.query('INSERT INTO recipe_ingredients(recipe_id,ingredient_name,amount,unit,original_amount,original_unit,amount_grams,food_id,sort_order) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)', [req.params.id, String(item.name || '').trim(), amount, unit, originalAmount == null ? amount : originalAmount, item.original_unit || unit, amountGrams, food.rows[0]?.id || null, index]);
     }
     await client.query('COMMIT'); res.json({ recipe: result.rows[0] });
   } catch (error) { await client.query('ROLLBACK'); console.error('Recipe update failed:', error.message); res.status(500).json({ error: 'Could not update recipe' }); }
