@@ -120,7 +120,9 @@ function imageCandidates(html){const found=[];for(const re of [/<meta[^>]+(?:pro
 async function downloadRecipeImage(url){if(!url)return {data:null,mime:null};try{const r=await fetch(url,{redirect:'follow',headers:{'User-Agent':'lifeonplants recipe importer/1.0'}});if(!r.ok)return {data:null,mime:null};const mime=(r.headers.get('content-type')||'').split(';')[0];if(!mime.startsWith('image/')||Number(r.headers.get('content-length')||0)>10000000)return {data:null,mime:null};return {data:Buffer.from(await r.arrayBuffer()),mime}}catch{return {data:null,mime:null}}}
 function safeRecipeUrl(value){try{const u=new URL(value);if(!['http:','https:'].includes(u.protocol))return null;if(['localhost','127.0.0.1','0.0.0.0'].includes(u.hostname)||u.hostname.endsWith('.local'))return null;return u.toString()}catch{return null}}
 function parseModelJson(content){let text=String(content||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');try{return JSON.parse(text)}catch{const start=text.indexOf('{'),end=text.lastIndexOf('}');if(start>=0&&end>start)return JSON.parse(text.slice(start,end+1));throw new Error('AI returned incomplete recipe data')}}
-async function callFalRouter(messages){const key=process.env.FAL_KEY||process.env.OPENROUTER_API_KEY;if(!key)throw new Error('FAL_KEY is not configured for Living on Plants');const response=await fetch('https://fal.run/openrouter/router/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Key ${key}`},body:JSON.stringify({model:'google/gemini-2.5-flash',temperature:0,max_tokens:1800,response_format:{type:'json_object'},messages})});if(!response.ok)throw new Error(`AI gateway returned ${response.status}`);const data=await response.json();return parseModelJson(data.choices?.[0]?.message?.content||'{}')}
+async function aiConfig(){const fallback={model:'google/gemini-2.5-flash',input_cost_per_million_usd:0,output_cost_per_million_usd:0};if(!pool)return fallback;try{return {...fallback,...(await pool.query('SELECT model,input_cost_per_million_usd,output_cost_per_million_usd FROM ai_provider_settings WHERE singleton=TRUE')).rows[0]}}catch{return fallback}}
+async function recordAiUsage(config,operation,usage,success,errorCode=null){if(!pool)return;const input=Number(usage?.prompt_tokens||0),output=Number(usage?.completion_tokens||0),total=Number(usage?.total_tokens||input+output),cost=(input*Number(config.input_cost_per_million_usd||0)+output*Number(config.output_cost_per_million_usd||0))/1000000;try{await pool.query('INSERT INTO ai_usage_events(operation,provider,model,input_tokens,output_tokens,total_tokens,estimated_cost_usd,success,error_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[operation,'fal',config.model,input,output,total,cost,success,errorCode])}catch(error){console.error('AI usage logging failed:',error.message)}}
+async function callFalRouter(messages,operation='recipe_import'){const key=process.env.FAL_KEY||process.env.OPENROUTER_API_KEY;if(!key)throw new Error('FAL_KEY is not configured for Living on Plants');const config=await aiConfig();try{const response=await fetch('https://fal.run/openrouter/router/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Key ${key}`},body:JSON.stringify({model:config.model,temperature:0,max_tokens:1800,response_format:{type:'json_object'},messages})});if(!response.ok){await recordAiUsage(config,operation,null,false,String(response.status));throw new Error(`AI gateway returned ${response.status}`)}const data=await response.json();await recordAiUsage(config,operation,data.usage,true);return parseModelJson(data.choices?.[0]?.message?.content||'{}')}catch(error){if(!/AI gateway returned/.test(error.message))await recordAiUsage(config,operation,null,false,'request_failed');throw error}}
 
 app.post('/api/recipe-import/preview', async (req,res)=>{const url=safeRecipeUrl(req.body?.url);if(!url)return res.status(400).json({error:'A public http(s) recipe URL is required'});try{const page=await fetch(url,{redirect:'follow',headers:{'User-Agent':'lifeonplants recipe importer/1.0'}});if(!page.ok)throw new Error(`Recipe page returned ${page.status}`);const html=await page.text();const result=await callFalRouter([{role:'system',content:'Extract a recipe for human review. Return JSON only with keys name,description,instructions,ingredients (array of name,amount,unit,amount_grams,original_amount,original_unit),image_url. Preserve the original ingredient amount and unit for display (for example 2 apples, 2 dl sugar, 1 tbsp oil). Also provide amount_grams only when a safe, ingredient-specific conversion is reliable; otherwise use null. Never replace a missing conversion with zero or a guess. Choose one image only from the supplied candidates, or null.'},{role:'user',content:JSON.stringify({url,text:stripHtml(html).slice(0,50000),image_candidates:imageCandidates(html)})}]);res.json({source_url:url,preview:{name:String(result.name||'Imported recipe'),description:result.description||'',instructions:result.instructions||'',ingredients:Array.isArray(result.ingredients)?result.ingredients:[],image_url:result.image_url||null}})}catch(error){console.error('Recipe import preview failed:',error.message);res.status(502).json({error:'Could not create recipe preview',detail:error.message})}});
 
@@ -201,6 +203,34 @@ app.get('/api/foods', async (req, res) => {
     console.error('Food search failed:', error.message);
     res.status(500).json({ error: 'Could not search foods' });
   }
+});
+
+function operatorAuthorized(req) {
+  const configured = process.env.ADMIN_DASHBOARD_TOKEN;
+  const received = req.get('x-admin-token');
+  if (!configured || !received) return false;
+  const expected = Buffer.from(configured), actual = Buffer.from(received);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+app.get('/api/ops/ai', async (req, res) => {
+  if (!operatorAuthorized(req)) return res.sendStatus(404);
+  if (!pool) return res.status(503).json({ error:'Database not configured' });
+  try {
+    const [settings, daily, byModel] = await Promise.all([
+      pool.query('SELECT provider,model,input_cost_per_million_usd,output_cost_per_million_usd,updated_at FROM ai_provider_settings WHERE singleton=TRUE'),
+      pool.query(`SELECT created_at::date AS day, COUNT(*)::int AS requests, COALESCE(SUM(estimated_cost_usd),0) AS cost_usd, COALESCE(SUM(total_tokens),0)::int AS tokens FROM ai_usage_events WHERE created_at >= now()-interval '30 days' GROUP BY 1 ORDER BY 1 DESC`),
+      pool.query(`SELECT provider,model,COUNT(*)::int AS requests,COALESCE(SUM(estimated_cost_usd),0) AS cost_usd,COALESCE(SUM(total_tokens),0)::int AS tokens FROM ai_usage_events WHERE created_at >= now()-interval '30 days' GROUP BY 1,2 ORDER BY cost_usd DESC`)
+    ]);
+    res.json({ settings:settings.rows[0], daily:daily.rows, by_model:byModel.rows, balance_usd:null, balance_note:'Fal account balance is not exposed through this application.' });
+  } catch (error) { console.error('AI dashboard read failed:',error.message); res.status(500).json({ error:'Could not load AI dashboard' }); }
+});
+app.put('/api/ops/ai/settings', async (req, res) => {
+  if (!operatorAuthorized(req)) return res.sendStatus(404);
+  if (!pool) return res.status(503).json({ error:'Database not configured' });
+  const { model, input_cost_per_million_usd: inputCost, output_cost_per_million_usd: outputCost } = req.body || {};
+  if (typeof model !== 'string' || !model.trim() || !Number.isFinite(Number(inputCost)) || !Number.isFinite(Number(outputCost))) return res.status(400).json({ error:'model and token prices are required' });
+  try { const result=await pool.query(`UPDATE ai_provider_settings SET provider='fal',model=$1,input_cost_per_million_usd=$2,output_cost_per_million_usd=$3,updated_at=now() WHERE singleton=TRUE RETURNING provider,model,input_cost_per_million_usd,output_cost_per_million_usd,updated_at`,[model.trim(),Number(inputCost),Number(outputCost)]); res.json({settings:result.rows[0]}); }
+  catch(error){console.error('AI dashboard settings failed:',error.message);res.status(500).json({error:'Could not update AI settings'});}
 });
 
 function suggestIngredientLocally(ingredient = {}) {
@@ -496,7 +526,7 @@ async function applyNutritionMigrations() {
   if (!pool) return;
   const client = await pool.connect();
   try {
-    const filenames = ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql', '017_retire_legacy_food_catalog.sql', '018_nutrition_data_repair.sql'];
+    const filenames = ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql', '017_retire_legacy_food_catalog.sql', '018_nutrition_data_repair.sql', '020_ai_usage_dashboard.sql'];
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
     // Older deployments predate migration tracking. The presence of the last pre-repair
     // table is their durable application record, so baseline them instead of replaying.
