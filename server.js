@@ -120,7 +120,7 @@ function imageCandidates(html){const found=[];for(const re of [/<meta[^>]+(?:pro
 async function downloadRecipeImage(url){if(!url)return {data:null,mime:null};try{const r=await fetch(url,{redirect:'follow',headers:{'User-Agent':'lifeonplants recipe importer/1.0'}});if(!r.ok)return {data:null,mime:null};const mime=(r.headers.get('content-type')||'').split(';')[0];if(!mime.startsWith('image/')||Number(r.headers.get('content-length')||0)>10000000)return {data:null,mime:null};return {data:Buffer.from(await r.arrayBuffer()),mime}}catch{return {data:null,mime:null}}}
 function safeRecipeUrl(value){try{const u=new URL(value);if(!['http:','https:'].includes(u.protocol))return null;if(['localhost','127.0.0.1','0.0.0.0'].includes(u.hostname)||u.hostname.endsWith('.local'))return null;return u.toString()}catch{return null}}
 function parseModelJson(content){let text=String(content||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');try{return JSON.parse(text)}catch{const start=text.indexOf('{'),end=text.lastIndexOf('}');if(start>=0&&end>start)return JSON.parse(text.slice(start,end+1));throw new Error('AI returned incomplete recipe data')}}
-async function callFalRouter(messages){const key=process.env.FAL_KEY||process.env.OPENROUTER_API_KEY;if(!key)throw new Error('FAL_KEY is not configured for Life on Plants');const response=await fetch('https://fal.run/openrouter/router/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Key ${key}`},body:JSON.stringify({model:'google/gemini-2.5-flash',temperature:0,max_tokens:1800,response_format:{type:'json_object'},messages})});if(!response.ok)throw new Error(`AI gateway returned ${response.status}`);const data=await response.json();return parseModelJson(data.choices?.[0]?.message?.content||'{}')}
+async function callFalRouter(messages){const key=process.env.FAL_KEY||process.env.OPENROUTER_API_KEY;if(!key)throw new Error('FAL_KEY is not configured for Living on Plants');const response=await fetch('https://fal.run/openrouter/router/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Key ${key}`},body:JSON.stringify({model:'google/gemini-2.5-flash',temperature:0,max_tokens:1800,response_format:{type:'json_object'},messages})});if(!response.ok)throw new Error(`AI gateway returned ${response.status}`);const data=await response.json();return parseModelJson(data.choices?.[0]?.message?.content||'{}')}
 
 app.post('/api/recipe-import/preview', async (req,res)=>{const url=safeRecipeUrl(req.body?.url);if(!url)return res.status(400).json({error:'A public http(s) recipe URL is required'});try{const page=await fetch(url,{redirect:'follow',headers:{'User-Agent':'lifeonplants recipe importer/1.0'}});if(!page.ok)throw new Error(`Recipe page returned ${page.status}`);const html=await page.text();const result=await callFalRouter([{role:'system',content:'Extract a recipe for human review. Return JSON only with keys name,description,instructions,ingredients (array of name,amount,unit,amount_grams,original_amount,original_unit),image_url. Preserve the original ingredient amount and unit for display (for example 2 apples, 2 dl sugar, 1 tbsp oil). Also provide amount_grams only when a safe, ingredient-specific conversion is reliable; otherwise use null. Never replace a missing conversion with zero or a guess. Choose one image only from the supplied candidates, or null.'},{role:'user',content:JSON.stringify({url,text:stripHtml(html).slice(0,50000),image_candidates:imageCandidates(html)})}]);res.json({source_url:url,preview:{name:String(result.name||'Imported recipe'),description:result.description||'',instructions:result.instructions||'',ingredients:Array.isArray(result.ingredients)?result.ingredients:[],image_url:result.image_url||null}})}catch(error){console.error('Recipe import preview failed:',error.message);res.status(502).json({error:'Could not create recipe preview',detail:error.message})}});
 
@@ -178,6 +178,7 @@ app.get('/api/foods', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const query = String(req.query.q || '').trim().replace(/\s+/g, ' ');
   const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  const matchingMode = req.query.mode === 'match';
   if (query.length < 2 || !tokens.length) return res.json({ foods: [], note: 'Search needs at least two characters; no approximate food is selected automatically.' });
   try {
     // Word-boundary tokens prevent a partial word from becoming a proposed basic
@@ -186,7 +187,7 @@ app.get('/api/foods', async (req, res) => {
       SELECT id, COALESCE(display_name,name) AS name, name AS raw_name, display_name, name_sv, name_fi, state, fineli_food_id, source_name
       FROM foods
       WHERE status='verified' AND basis_amount=100 AND basis_unit='g' AND fineli_food_id IS NOT NULL
-        AND NOT (state IN ('MIX', 'REC', 'DRINK') OR name ~* '(mix|wok|soup|stew|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle|pizza|sandwich|salad|curry|smoothie|juice|drink|beverage|babyfood|filled|cutlet|patty|pastie|pie|pudding|porridge|meal|powder|chicken|turkey|beef|pork|lamb|fish|sausage|meatball|cereal|cake|cookie|biscuit|chocolate|yogurt|yoghurt|cheese|milk|cream|mayonnaise|dressing|spread|jam|marmalade|sauce|with salt|with butter|in milk)')
+        AND ($3::boolean OR NOT (state IN ('MIX', 'REC', 'DRINK') OR name ~* '(mix|wok|soup|stew|hamburger|casserole|gravy|dessert|ice cream|frankfurter|noodle|pizza|sandwich|salad|curry|smoothie|juice|drink|beverage|babyfood|filled|cutlet|patty|pastie|pie|pudding|porridge|meal|powder|chicken|turkey|beef|pork|lamb|fish|sausage|meatball|cereal|cake|cookie|biscuit|chocolate|yogurt|yoghurt|cheese|milk|cream|mayonnaise|dressing|spread|jam|marmalade|sauce|with salt|with butter|in milk)'))
         AND NOT EXISTS (
           SELECT 1 FROM unnest($1::text[]) AS token
           WHERE COALESCE(name, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
@@ -194,12 +195,37 @@ app.get('/api/foods', async (req, res) => {
             AND COALESCE(name_fi, '') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')
         )
       ORDER BY CASE WHEN lower(name)=lower($2) THEN 0 WHEN lower(name) LIKE lower($2) || ',%' THEN 1 ELSE 2 END, length(COALESCE(display_name,name)), name
-      LIMIT 20`, [tokens, query]);
+      LIMIT 20`, [tokens, query, matchingMode]);
     res.json({ foods: result.rows, note: 'Choose the exact Fineli record and preparation state yourself. Results are not automatically matched; dishes and drinks are excluded.' });
   } catch (error) {
     console.error('Food search failed:', error.message);
     res.status(500).json({ error: 'Could not search foods' });
   }
+});
+
+function suggestIngredientLocally(ingredient = {}) {
+  const sourceName = String(ingredient.name || '').trim();
+  const sourceUnit = String(ingredient.unit || '').trim();
+  const combined = `${sourceUnit} ${sourceName}`.toLowerCase();
+  const aliases = { 'vispgrädde':'whipping cream', 'matlagningsgrädde':'cooking cream', 'purjolök':'leek', 'potatis':'potato', 'grönsaksbuljong':'vegetable bouillon', 'peppar':'black pepper', 'torkad timjan':'thyme, dried', 'rapsolja':'rapeseed oil', 'olja':'oil', 'persilja':'parsley', 'bröd':'bread' };
+  const normalizedName = aliases[sourceName.toLowerCase()] || sourceName;
+  const statedGrams = combined.match(/(?:ca|cirka|about)?\s*(\d+(?:[.,]\d+)?)\s*g\b/i);
+  const amount = numberOrNull(ingredient.amount);
+  const householdUnit = /^(st|styck|piece|purjolök)$/i.test(sourceUnit) || /purjolök.*\bg\)/i.test(sourceUnit) ? 'piece' : sourceUnit;
+  return { search_query:normalizedName, normalized_name:normalizedName, amount, unit:householdUnit, amount_grams:statedGrams ? numberOrNull(statedGrams[1]) : numberOrNull(ingredient.amount_grams), confidence: aliases[sourceName.toLowerCase()] ? 0.78 : 0.35, source:'local' };
+}
+
+app.post('/api/ingredient-match/suggest', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const ingredient = req.body?.ingredient || {};
+  const suggestion = suggestIngredientLocally(ingredient);
+  const query = suggestion.search_query;
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  if (!tokens.length) return res.json({ suggestion, foods:[], suggested_food_id:null });
+  try {
+    const result = await pool.query(`SELECT id, COALESCE(display_name,name) AS name, state, fineli_food_id FROM foods WHERE status='verified' AND basis_amount=100 AND basis_unit='g' AND fineli_food_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unnest($1::text[]) AS token WHERE COALESCE(name,'') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)') AND COALESCE(name_sv,'') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)') AND COALESCE(name_fi,'') !~* ('(^|[^[:alnum:]])' || token || '([^[:alnum:]]|$)')) ORDER BY CASE WHEN lower(name)=lower($2) THEN 0 WHEN lower(name) LIKE lower($2) || ',%' THEN 1 ELSE 2 END, length(COALESCE(display_name,name)), name LIMIT 20`, [tokens, query]);
+    res.json({ suggestion, foods:result.rows, suggested_food_id:result.rows[0]?.id || null });
+  } catch (error) { console.error('Ingredient suggestion failed:', error.message); res.status(500).json({ error:'Could not suggest a food match' }); }
 });
 
 app.get('/api/totals', async (req, res) => {
@@ -487,5 +513,5 @@ async function applyNutritionMigrations() {
 }
 
 applyNutritionMigrations()
-  .then(() => app.listen(port, () => console.log(`Life on Plants API listening on port ${port}`)))
+  .then(() => app.listen(port, () => console.log(`Living on Plants API listening on port ${port}`)))
   .catch((error) => { console.error('Nutrition migration failed:', error.message); process.exit(1); });
