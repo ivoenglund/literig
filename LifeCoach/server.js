@@ -79,7 +79,7 @@ async function verifiedFineliIngredients(client, ingredients) {
 }
 
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'https://literig.com');
+  res.setHeader('Access-Control-Allow-Origin', 'https://lifeonplants.com');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -451,5 +451,5 @@ async function applyNutritionMigrations() {
 }
 
 applyNutritionMigrations()
-  .then(() => app.listen(port, () => console.log(`LITERIG Life Coach API listening on port ${port}`)))
+  .then(() => app.listen(port, () => console.log(`Life on Plants API listening on port ${port}`)))
   .catch((error) => { console.error('Nutrition migration failed:', error.message); process.exit(1); });
