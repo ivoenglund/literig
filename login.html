@@ -1,1 +1,22 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Living on Plants</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f7f2;color:#17352b;font:16px system-ui}.card{width:min(420px,calc(100% - 32px));background:#fff;border:1px solid #d9e4dc;border-radius:14px;padding:28px}input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;font:inherit}input{border:1px solid #cbd9d0;margin:10px 0}button{border:0;background:#22734e;color:#fff;font-weight:700}.muted{color:#60746b;font-size:.92rem}</style><body><main class="card"><h1>Living on Plants</h1><p>Enter your email and we will send you a secure sign-in link.</p><form id="form"><input id="email" type="email" autocomplete="email" placeholder="you@example.com" required><button>Send sign-in link</button></form><p id="message" class="muted"></p></main><script>const message=document.querySelector('#message');document.querySelector('#form').onsubmit=async e=>{e.preventDefault();message.textContent='Sending…';const r=await fetch('/auth/request-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value})});const d=await r.json().catch(()=>({}));message.textContent=r.ok?'Check your email for the sign-in link.':(d.error||'Could not send the link.');};const error=new URLSearchParams(location.search).get('error');if(error)message.textContent='That sign-in link is no longer valid. Request a new one.';</script></body></html>
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in · Living on Plants</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f7f2;color:#17352b;font:16px system-ui}.card{width:min(420px,calc(100% - 32px));background:#fff;border:1px solid #d9e4dc;border-radius:14px;padding:28px}input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;font:inherit}input{border:1px solid #cbd9d0;margin:10px 0}button{border:0;background:#22734e;color:#fff;font-weight:700}.muted{color:#60746b;font-size:.92rem}</style>
+<body>
+<main class="card">
+  <h1>Living on Plants</h1>
+  <p>Sign in to calculate what you eat today and view nutrition for this session.</p>
+  <form id="form"><input id="email" type="email" autocomplete="email" placeholder="you@example.com" required><button>Send sign-in link</button></form>
+  <p class="muted">Your email is only used to send the sign-in link. We never share it.</p>
+  <p id="message" class="muted"></p>
+</main>
+<script>
+const message=document.querySelector('#message');
+document.querySelector('#form').onsubmit=async e=>{e.preventDefault();message.textContent='Sending…';const r=await fetch('/auth/request-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value})});const d=await r.json().catch(()=>({}));message.textContent=r.ok?'Check your email for the sign-in link.':(d.error||'Could not send the link.');};
+const error=new URLSearchParams(location.search).get('error');
+if(error)message.textContent='That sign-in link is no longer valid. Request a new one.';
+</script>
+</body>
+</html>
