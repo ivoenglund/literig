@@ -1,6 +1,9 @@
 import express from 'express';
 import pg from 'pg';
 import { timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import cookieParser from 'cookie-parser';
+import { Resend } from 'resend';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getFineliCatalogStatus, importFullFineli } from './import-fineli-full.js';
@@ -11,6 +14,9 @@ const port = Number(process.env.PORT || 3000);
 const pool = process.env.DATABASE_URL
   ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
   : null;
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const SESSION_COOKIE = 'livingonplants_session';
+const SESSION_DAYS = 14;
 
 // Fineli stores ENERC in kJ and the importer stores the separately-derived kcal row.
 const DISPLAY_NUTRIENTS = [
@@ -105,6 +111,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended:false }));
+app.use(cookieParser());
 app.use('/api/recipe-import/approve', (req, _res, next) => {
   if (req.method === 'POST' && Array.isArray(req.body?.preview?.ingredients)) {
     const units = /^(kg|hg|g|mg|dl|cl|ml|l|msk|tsk|krm|st|portion|portions)$/i;
@@ -163,6 +171,26 @@ app.post('/api/fineli-import-batch', async (req, res) => {
   try { res.json(await importFullFineli(pool, { offset, limit: 25 })); }
   catch (error) { console.error('Fineli batch failed:', error.message); res.status(500).json({ error: 'Fineli batch failed' }); }
 });
+
+const hashToken = token => createHash('sha256').update(token).digest('hex');
+const sessionCookieOptions = expires => ({ httpOnly:true, secure:process.env.NODE_ENV === 'production', sameSite:'lax', path:'/', expires });
+async function sessionUser(req) {
+  const token = req.cookies?.[SESSION_COOKIE];
+  if (!token || !pool) return null;
+  const result = await pool.query(`SELECT u.id,u.email FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()`, [hashToken(token)]);
+  return result.rows[0] || null;
+}
+app.get('/auth/me', async (req,res) => { try { const user=await sessionUser(req); res.json({user}); } catch { res.status(500).json({error:'Could not read session'}); } });
+app.post('/auth/request-link', async (req,res) => {
+  const email=String(req.body?.email||'').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({error:'Enter a valid email address'});
+  if (!resend) return res.status(503).json({error:'Email delivery is not configured yet'});
+  const token=randomBytes(32).toString('base64url'), expires=new Date(Date.now()+15*60*1000);
+  try { await pool.query('INSERT INTO auth_magic_links(email,token_hash,expires_at) VALUES($1,$2,$3)',[email,hashToken(token),expires]); const origin=process.env.APP_URL||`${req.protocol}://${req.get('host')}`; const link=`${origin}/auth/verify?token=${encodeURIComponent(token)}`; await resend.emails.send({from:process.env.EMAIL_FROM||'Living on Plants <noreply@livingonplants.com>',to:email,subject:'Your sign-in link for Living on Plants',html:`<p>Click below to sign in. This link expires in 15 minutes and can be used once.</p><p><a href="${link}" style="display:inline-block;padding:12px 18px;background:#22734e;color:#fff;border-radius:7px;text-decoration:none">Sign in to Living on Plants</a></p><p>If you did not request this, you can ignore this email.</p>`}); res.json({ok:true}); } catch(error){console.error('Magic link send failed:',error.message);res.status(500).json({error:'Could not send sign-in link'});}
+});
+app.get('/auth/verify', (req,res) => { const token=String(req.query.token||''); if(!token)return res.redirect('/login.html?error=missing'); res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Sign in · Living on Plants</title><form method="post" action="/auth/verify" style="max-width:420px;margin:12vh auto;font:16px system-ui"><h1>Ready to sign in?</h1><p>Click once to complete sign-in.</p><input type="hidden" name="token" value="${token.replace(/"/g,'&quot;')}"><button style="padding:12px 18px;background:#22734e;color:#fff;border:0;border-radius:7px">Sign in</button></form>`); });
+app.post('/auth/verify', async (req,res) => { const token=String(req.body?.token||''); if(!token)return res.redirect('/login.html?error=missing'); const client=await pool.connect(); try { await client.query('BEGIN'); const link=(await client.query('UPDATE auth_magic_links SET used_at=now() WHERE token_hash=$1 AND expires_at>now() AND used_at IS NULL RETURNING email',[hashToken(token)])).rows[0]; if(!link){await client.query('ROLLBACK');return res.redirect('/login.html?error=invalid');} const user=(await client.query('INSERT INTO users(email) VALUES($1) ON CONFLICT (lower(email)) WHERE email IS NOT NULL DO UPDATE SET email=EXCLUDED.email RETURNING id,email',[link.email])).rows[0]; const sessionToken=randomBytes(32).toString('base64url'), expires=new Date(Date.now()+SESSION_DAYS*86400000); await client.query('INSERT INTO auth_sessions(user_id,token_hash,expires_at) VALUES($1,$2,$3)',[user.id,hashToken(sessionToken),expires]); await client.query('COMMIT'); res.cookie(SESSION_COOKIE,sessionToken,sessionCookieOptions(expires)); res.redirect('/'); } catch(error){await client.query('ROLLBACK');console.error('Magic link verify failed:',error.message);res.redirect('/login.html?error=server');} finally {client.release();} });
+app.post('/auth/logout', async (req,res) => { const token=req.cookies?.[SESSION_COOKIE]; if(token&&pool)await pool.query('DELETE FROM auth_sessions WHERE token_hash=$1',[hashToken(token)]);res.clearCookie(SESSION_COOKIE,{path:'/'});res.status(204).end(); });
 
 app.post('/api/bootstrap', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
@@ -526,7 +554,7 @@ async function applyNutritionMigrations() {
   if (!pool) return;
   const client = await pool.connect();
   try {
-    const filenames = ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql', '017_retire_legacy_food_catalog.sql', '018_nutrition_data_repair.sql', '020_ai_usage_dashboard.sql'];
+    const filenames = ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql', '017_retire_legacy_food_catalog.sql', '018_nutrition_data_repair.sql', '020_ai_usage_dashboard.sql', '021_magic_link_auth.sql'];
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
     // Older deployments predate migration tracking. The presence of the last pre-repair
     // table is their durable application record, so baseline them instead of replaying.
