@@ -19,7 +19,7 @@ QUERIES = {
 }
 
 def get(path):
-    req = Request(API + path, headers={"User-Agent": "LITERIG-LifeCoach/1.0"})
+    req = Request(API + path, headers={"User-Agent": "LifeOnPlants/1.0"})
     with urlopen(req, timeout=30) as response:
         return json.load(response)
 

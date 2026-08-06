@@ -1,4 +1,4 @@
--- LITERIG Life Coach schema
+-- Life on Plants database schema
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
