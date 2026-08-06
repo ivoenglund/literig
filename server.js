@@ -247,6 +247,18 @@ app.get('/api/recipes', async (_req, res) => {
   res.json({ recipes: result.rows });
 });
 
+app.get('/api/recipes/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  try {
+    const result = await pool.query(`SELECT r.id, r.name, r.description, r.instructions, r.servings, r.image_url, CASE WHEN r.image_data IS NOT NULL THEN 'data:'||r.image_mime||';base64,'||encode(r.image_data,'base64') ELSE NULL END AS image_data_uri, COALESCE(json_agg(json_build_object('name',ri.ingredient_name,'amount',ri.amount,'unit',ri.unit,'amount_grams',ri.amount_grams,'original_amount',ri.original_amount,'original_unit',ri.original_unit,'food_id',ri.food_id,'state',f.state,'source_name',f.source_name,'fineli_food_id',f.fineli_food_id) ORDER BY ri.sort_order) FILTER (WHERE ri.id IS NOT NULL), '[]') AS ingredients FROM recipes r LEFT JOIN recipe_ingredients ri ON ri.recipe_id=r.id LEFT JOIN foods f ON f.id=ri.food_id WHERE r.id=$1 GROUP BY r.id`, [req.params.id]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Recipe query failed:', error.message);
+    res.status(500).json({ error: 'Could not load recipe' });
+  }
+});
+
 app.get('/api/recipes-delete-status', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   try {

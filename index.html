@@ -56,13 +56,27 @@
   <div id="recipe-modal" class="modal" hidden><article class="modal-box"><div class="actions" style="justify-content:space-between"><h2 id="recipe-title">Recipe</h2><button class="secondary" onclick="closeRecipe()">Close</button></div><div id="recipe-content"></div></article></div>
   <script>
     const API = window.location.origin;
-    const userId = 'life-on-plants';
+    const USER_ID_STORAGE_KEY = 'livingonplants.user-id';
+    let userId = localStorage.getItem(USER_ID_STORAGE_KEY);
     let selectedDate = new Date().toISOString().slice(0,10);
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     function dateLabel() { const today = new Date().toISOString().slice(0,10); return selectedDate === today ? 'Today' : new Intl.DateTimeFormat('en', { month:'short', day:'numeric', year:'numeric' }).format(new Date(selectedDate + 'T12:00:00')); }
     function renderDate() { document.getElementById('selected-date').textContent = dateLabel(); document.getElementById('day-title').textContent = dateLabel(); }
     function changeDay(days) { const next = new Date(selectedDate + 'T12:00:00'); next.setDate(next.getDate() + days); selectedDate = next.toISOString().slice(0,10); renderDate(); loadEntries(); loadNutrition(); }
-    async function request(path, options) { const response = await fetch(API + path, options); if (!response.ok) throw new Error('Request failed'); return response.json(); }
+    async function request(path, options) {
+      const response = await fetch(API + path, options);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Request failed (${response.status})`);
+      }
+      return response.status === 204 ? null : response.json();
+    }
+    async function ensureUser() {
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')) return;
+      const data = await request('/api/bootstrap', { method:'POST' });
+      userId = data.user_id;
+      localStorage.setItem(USER_ID_STORAGE_KEY, userId);
+    }
     async function loadRecipes() { const box = document.getElementById('recipes'); try { const data = await request('/api/recipes'); const recipes = data.recipes || []; box.innerHTML = recipes.length ? recipes.map(recipe => `<div class="recipe"><div class="recipe-title">${escapeHtml(recipe.name)}</div><div class="meta">${(recipe.ingredients || []).map(i => escapeHtml(`${i.original_amount ?? i.amount ?? ''} ${i.original_unit || i.unit || ''} ${i.name || ''}`)).join(' · ')}</div><div class="actions"><button class="secondary" onclick="viewRecipe('${escapeHtml(recipe.id)}')">View recipe</button><button onclick="logRecipe('${escapeHtml(recipe.id)}')">Add to selected day</button></div></div>`).join('') : '<span class="muted">No standard recipes yet.</span>'; } catch { box.textContent = 'Recipes could not be loaded.'; } }
     async function loadEntries() { const box = document.getElementById('entries'); try { const data = await request(`/api/entries?user_id=${encodeURIComponent(userId)}&date=${selectedDate}`); const entries = data.entries || []; box.innerHTML = entries.length ? entries.map(entry => `<div class="entry"><div class="entry-title">${escapeHtml(entry.description)}</div>${entry.ingredients ? `<div class="meta">${entry.ingredients.map(i => escapeHtml(`${i.amount ?? ''} ${i.unit || ''} ${i.name || ''}`)).join(' · ')}</div>` : '<div class="meta">Note: no nutrition calculated.</div>'}<div class="actions"><button class="danger" onclick="removeEntry('${escapeHtml(entry.id)}','${escapeHtml(entry.source)}')">Remove</button>${entry.recipe_id ? `<button class="secondary" onclick="viewRecipe('${escapeHtml(entry.recipe_id)}')">View recipe</button>` : ''}</div></div>`).join('') : '<span class="muted">No food entries for this day.</span>'; } catch { box.textContent = 'Entries could not be loaded.'; } }
     async function loadNutrition() { const box = document.getElementById('nutrition'); try { const data = await request(`/api/totals?user_id=${encodeURIComponent(userId)}&date=${selectedDate}`); if (!data.recipe_entries) { box.innerHTML = '<p class="muted">No recipe nutrition for this day yet.</p>'; return; } box.innerHTML = `<table><thead><tr><th>Nutrient</th><th>Food</th><th>Daily value</th></tr></thead><tbody>${(data.nutrients || []).map(n => `<tr><td>${escapeHtml(n.name)}</td><td>${escapeHtml(n.value ?? n.amount ?? '')} ${escapeHtml(n.unit ?? '')}</td><td>${escapeHtml(n.daily_value ?? '')}</td></tr>`).join('')}</tbody></table><p class="muted">Linked ingredients: ${escapeHtml(data.coverage?.linked_gram_ingredients ?? 0)}/${escapeHtml(data.coverage?.gram_ingredients ?? 0)} with gram weight.</p>`; } catch { box.textContent = 'Nutrition data could not be loaded.'; } }
@@ -71,7 +85,16 @@
     async function removeEntry(id, source) { if (!confirm('Remove this entry from the selected day?')) return; try { const endpoint = source === 'recipe' ? `/api/recipe-entries/${id}?user_id=${encodeURIComponent(userId)}` : `/api/entries/${id}?user_id=${encodeURIComponent(userId)}`; await request(endpoint, { method:'DELETE' }); loadEntries(); loadNutrition(); } catch { alert('Could not remove this entry.'); } }
     async function viewRecipe(id) { const modal = document.getElementById('recipe-modal'); document.getElementById('recipe-content').innerHTML = '<p class="muted">Loading recipe...</p>'; modal.hidden = false; try { const recipe = await request(`/api/recipes/${id}`); document.getElementById('recipe-title').textContent = recipe.name || 'Recipe'; document.getElementById('recipe-content').innerHTML = `<h3>Ingredients</h3><p>${(recipe.ingredients || []).map(i => escapeHtml(`${i.original_amount ?? i.amount ?? ''} ${i.original_unit || i.unit || ''} ${i.name || ''}`)).join('<br>')}</p><h3>Instructions</h3><p style="white-space:pre-wrap">${escapeHtml(recipe.instructions || 'No instructions added.')}</p>`; } catch { document.getElementById('recipe-content').textContent = 'Recipe could not be loaded.'; } }
     function closeRecipe() { document.getElementById('recipe-modal').hidden = true; }
-    renderDate(); loadRecipes(); loadEntries(); loadNutrition();
+    async function initialize() {
+      renderDate();
+      try {
+        await ensureUser();
+        await Promise.all([loadRecipes(), loadEntries(), loadNutrition()]);
+      } catch (error) {
+        document.getElementById('entries').textContent = `The app could not start: ${error.message}`;
+      }
+    }
+    initialize();
   </script>
 </body>
 </html>
