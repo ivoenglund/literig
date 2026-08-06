@@ -209,10 +209,12 @@ function suggestIngredientLocally(ingredient = {}) {
   const combined = `${sourceUnit} ${sourceName}`.toLowerCase();
   const aliases = { 'vispgrädde':'whipping cream', 'matlagningsgrädde':'cooking cream', 'purjolök':'leek', 'potatis':'potato', 'grönsaksbuljong':'vegetable bouillon', 'peppar':'black pepper', 'torkad timjan':'thyme, dried', 'rapsolja':'rapeseed oil', 'olja':'oil', 'persilja':'parsley', 'bröd':'bread' };
   const normalizedName = aliases[sourceName.toLowerCase()] || sourceName;
+  const context = String(ingredient.context || '').toLowerCase();
+  const searchQuery = normalizedName === 'potato' && /(koka|kokt|boil|simmer)/.test(context) ? 'potato boiled' : normalizedName;
   const statedGrams = combined.match(/(?:ca|cirka|about)?\s*(\d+(?:[.,]\d+)?)\s*g\b/i);
   const amount = numberOrNull(ingredient.amount);
   const householdUnit = /^(st|styck|piece|purjolök)$/i.test(sourceUnit) || /purjolök.*\bg\)/i.test(sourceUnit) ? 'piece' : sourceUnit;
-  return { search_query:normalizedName, normalized_name:normalizedName, amount, unit:householdUnit, amount_grams:statedGrams ? numberOrNull(statedGrams[1]) : numberOrNull(ingredient.amount_grams), confidence: aliases[sourceName.toLowerCase()] ? 0.78 : 0.35, source:'local' };
+  return { search_query:searchQuery, normalized_name:normalizedName, amount, unit:householdUnit, amount_grams:statedGrams ? numberOrNull(statedGrams[1]) : numberOrNull(ingredient.amount_grams), confidence: aliases[sourceName.toLowerCase()] ? 0.78 : 0.35, source:'local' };
 }
 
 app.post('/api/ingredient-match/suggest', async (req, res) => {
