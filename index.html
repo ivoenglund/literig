@@ -14,7 +14,10 @@
     .shell { max-width:1440px; margin:0 auto; padding:1.25rem; }
     header { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; padding:.7rem 0 1.45rem; }
     .brand { font-size:1.42rem; font-weight:800; letter-spacing:-.035em; } .tagline { color:var(--muted); }
-    .date-control { margin-left:auto; display:flex; align-items:center; gap:.55rem; } .date-control button { min-width:2.3rem; padding:.42rem; }
+    .header-actions,.date-control { display:flex; align-items:center; gap:.55rem; } .header-actions { margin-left:auto; } .date-control button { min-width:2.3rem; padding:.42rem; }
+    .calendar-popover { position:absolute; right:0; top:calc(100% + .55rem); width:300px; background:#fff; border:1px solid var(--line); border-radius:12px; padding:.7rem; box-shadow:0 14px 32px rgba(25,55,41,.15); z-index:4; } .calendar-wrap { position:relative; } .calendar-popover[hidden] { display:none; }
+    .calendar-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:.4rem; font-weight:750; } .calendar-head button { min-width:2rem; padding:.25rem; }
+    .calendar-weekdays,.calendar-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:.15rem; text-align:center; }.calendar-weekdays { color:var(--muted); font-size:.7rem; font-weight:700; margin-bottom:.2rem; }.calendar-grid button { aspect-ratio:1; min-width:0; padding:0; border-radius:7px; color:var(--ink); background:transparent; font-size:.78rem; }.calendar-grid button:hover { background:var(--soft); }.calendar-grid button.outside { color:#a5b2aa; }.calendar-grid button.selected { color:#fff; background:var(--accent); }.calendar-grid button.today:not(.selected) { border:1px solid var(--accent); }
     main { display:grid; grid-template-columns:minmax(220px,.8fr) minmax(360px,1.5fr) minmax(260px,.9fr); gap:1rem; align-items:start; }
     .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:1.05rem; box-shadow:0 4px 18px rgba(31,70,51,.04); }
     .card + .card { margin-top:1rem; } h1,h2,h3,p { margin-top:0; } h2 { margin-bottom:.75rem; font-size:1rem; letter-spacing:-.015em; }
@@ -43,14 +46,14 @@
     .nutrition-note { font-size:.84rem; color:var(--muted); margin-top:.7rem; }
     @media (max-width:650px) { .ingredient-row { grid-template-columns:1fr 1fr; } .ingredient-row input[data-name] { grid-column:1/-1; } }
     @media (max-width:980px) { main { grid-template-columns:1fr 1fr; } .right { grid-column:1/-1; } }
-    @media (max-width:650px) { .shell { padding:.85rem; } main { display:block; } main>section { margin-top:1rem; } header { align-items:flex-start; } .date-control { order:3; width:100%; margin-left:0; } }
+    @media (max-width:650px) { .shell { padding:.85rem; } main { display:block; } main>section { margin-top:1rem; } header { align-items:flex-start; } .header-actions { width:100%; margin-left:0; justify-content:space-between; } .calendar-popover { right:auto; left:0; } }
   </style>
 </head>
 <body>
   <div class="shell">
     <header>
       <div><div class="brand">Living on Plants</div><div class="tagline">Your plant-based everyday</div></div>
-      <div class="date-control"><button class="secondary" aria-label="Previous day" onclick="changeDay(-1)">&lsaquo;</button><strong id="selected-date"></strong><button class="secondary" aria-label="Next day" onclick="changeDay(1)">&rsaquo;</button></div>
+      <div class="header-actions"><button class="secondary" onclick="goToday()">Today</button><div class="date-control"><button class="secondary" aria-label="Previous day" onclick="changeDay(-1)">&lsaquo;</button><strong id="selected-date"></strong><button class="secondary" aria-label="Next day" onclick="changeDay(1)">&rsaquo;</button></div><div class="calendar-wrap"><button class="secondary" aria-expanded="false" id="calendar-toggle" onclick="toggleCalendar()">Calendar</button><div id="calendar-popover" class="calendar-popover" hidden><div class="calendar-head"><button class="secondary" aria-label="Previous month" onclick="changeMonth(-1)">&lsaquo;</button><span id="calendar-month"></span><button class="secondary" aria-label="Next month" onclick="changeMonth(1)">&rsaquo;</button></div><div class="calendar-weekdays"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div><div id="calendar-grid" class="calendar-grid"></div></div></div><a id="admin-link" href="/ops.html" hidden>Dashboard</a></div>
     </header>
     <main>
       <section>
@@ -75,11 +78,19 @@
     const API = window.location.origin;
     const USER_ID_STORAGE_KEY = 'livingonplants.user-id';
     let userId = localStorage.getItem(USER_ID_STORAGE_KEY);
+    let authUser = null;
     let selectedDate = new Date().toISOString().slice(0,10);
+    let calendarMonth = new Date(selectedDate + 'T12:00:00');
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     function dateLabel() { const today = new Date().toISOString().slice(0,10); return selectedDate === today ? 'Today' : new Intl.DateTimeFormat('en', { month:'short', day:'numeric', year:'numeric' }).format(new Date(selectedDate + 'T12:00:00')); }
-    function renderDate() { document.getElementById('selected-date').textContent = dateLabel(); document.getElementById('day-title').textContent = dateLabel(); }
-    function changeDay(days) { const next = new Date(selectedDate + 'T12:00:00'); next.setDate(next.getDate() + days); selectedDate = next.toISOString().slice(0,10); renderDate(); loadEntries(); loadNutrition(); }
+    function isoDate(date) { return [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-'); }
+    function renderDate() { document.getElementById('selected-date').textContent = dateLabel(); document.getElementById('day-title').textContent = dateLabel(); renderCalendar(); }
+    function changeDay(days) { const next = new Date(selectedDate + 'T12:00:00'); next.setDate(next.getDate() + days); selectedDate = isoDate(next); calendarMonth = new Date(selectedDate + 'T12:00:00'); renderDate(); loadEntries(); loadNutrition(); }
+    function goToday() { selectedDate = isoDate(new Date()); calendarMonth = new Date(selectedDate + 'T12:00:00'); renderDate(); loadEntries(); loadNutrition(); }
+    function toggleCalendar() { const popover=document.getElementById('calendar-popover'), toggle=document.getElementById('calendar-toggle'); popover.hidden=!popover.hidden; toggle.setAttribute('aria-expanded',String(!popover.hidden)); if(!popover.hidden){calendarMonth=new Date(selectedDate+'T12:00:00');renderCalendar();} }
+    function changeMonth(delta) { calendarMonth.setMonth(calendarMonth.getMonth()+delta); renderCalendar(); }
+    function chooseDate(date) { selectedDate=isoDate(date); calendarMonth=new Date(selectedDate+'T12:00:00'); document.getElementById('calendar-popover').hidden=true; document.getElementById('calendar-toggle').setAttribute('aria-expanded','false'); renderDate(); loadEntries(); loadNutrition(); }
+    function renderCalendar() { const monthStart=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth(),1), firstOffset=(monthStart.getDay()+6)%7, grid=document.getElementById('calendar-grid'); document.getElementById('calendar-month').textContent=new Intl.DateTimeFormat('en',{month:'long',year:'numeric'}).format(calendarMonth); const start=new Date(monthStart); start.setDate(1-firstOffset); const today=isoDate(new Date()); grid.innerHTML=Array.from({length:42},(_,index)=>{const date=new Date(start);date.setDate(start.getDate()+index);const iso=isoDate(date),classes=[date.getMonth()===calendarMonth.getMonth()?'':'outside',iso===selectedDate?'selected':'',iso===today?'today':''].filter(Boolean).join(' ');return `<button class="${classes}" aria-label="${iso}" onclick="chooseDate(new Date('${iso}T12:00:00'))">${date.getDate()}</button>`}).join(''); }
     async function request(path, options) {
       const response = await fetch(API + path, options);
       if (!response.ok) {
@@ -91,7 +102,8 @@
     async function ensureUser() {
       const response = await fetch('/auth/me');
       const data = await response.json();
-      if (!data.user?.id) { userId = null; return false; }
+      if (!data.user?.id) { userId = null; authUser = null; return false; }
+      authUser = data.user;
       userId = data.user.id;
       localStorage.setItem(USER_ID_STORAGE_KEY, userId);
       return true;
@@ -136,6 +148,7 @@
       renderDate();
       try {
         await ensureUser();
+        if (authUser?.is_admin) document.getElementById('admin-link').hidden = false;
         await Promise.all([loadRecipes(), loadEntries(), loadNutrition()]);
       } catch (error) {
         document.getElementById('entries').textContent = `The app could not start: ${error.message}`;

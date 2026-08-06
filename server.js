@@ -180,7 +180,8 @@ async function sessionUser(req) {
   const result = await pool.query(`SELECT u.id,u.email FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()`, [hashToken(token)]);
   return result.rows[0] || null;
 }
-app.get('/auth/me', async (req,res) => { try { const user=await sessionUser(req); res.json({user}); } catch { res.status(500).json({error:'Could not read session'}); } });
+const isAdminEmail = email => Boolean(process.env.ADMIN_EMAIL && email && String(email).toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase());
+app.get('/auth/me', async (req,res) => { try { const user=await sessionUser(req); res.json({user:user ? {...user,is_admin:isAdminEmail(user.email)} : null}); } catch { res.status(500).json({error:'Could not read session'}); } });
 app.post('/auth/request-link', async (req,res) => {
   const email=String(req.body?.email||'').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({error:'Enter a valid email address'});
@@ -233,7 +234,9 @@ app.get('/api/foods', async (req, res) => {
   }
 });
 
-function operatorAuthorized(req) {
+async function operatorAuthorized(req) {
+  const user = await sessionUser(req);
+  if (isAdminEmail(user?.email)) return true;
   const configured = process.env.ADMIN_DASHBOARD_TOKEN;
   const received = req.get('x-admin-token');
   if (!configured || !received) return false;
@@ -241,7 +244,7 @@ function operatorAuthorized(req) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 app.get('/api/ops/ai', async (req, res) => {
-  if (!operatorAuthorized(req)) return res.sendStatus(404);
+  if (!await operatorAuthorized(req)) return res.sendStatus(404);
   if (!pool) return res.status(503).json({ error:'Database not configured' });
   try {
     const [settings, daily, byModel] = await Promise.all([
@@ -253,7 +256,7 @@ app.get('/api/ops/ai', async (req, res) => {
   } catch (error) { console.error('AI dashboard read failed:',error.message); res.status(500).json({ error:'Could not load AI dashboard' }); }
 });
 app.put('/api/ops/ai/settings', async (req, res) => {
-  if (!operatorAuthorized(req)) return res.sendStatus(404);
+  if (!await operatorAuthorized(req)) return res.sendStatus(404);
   if (!pool) return res.status(503).json({ error:'Database not configured' });
   const { model, input_cost_per_million_usd: inputCost, output_cost_per_million_usd: outputCost } = req.body || {};
   if (typeof model !== 'string' || !model.trim() || !Number.isFinite(Number(inputCost)) || !Number.isFinite(Number(outputCost))) return res.status(400).json({ error:'model and token prices are required' });
