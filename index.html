@@ -28,14 +28,17 @@
     .modal { position:fixed; inset:0; display:grid; place-items:center; padding:1rem; background:rgba(13,32,23,.38); } .modal[hidden] { display:none; }
     .modal-box { width:min(880px,100%); max-height:90vh; overflow:auto; background:#fff; border-radius:14px; padding:1.2rem; }
     textarea { width:100%; min-height:180px; resize:vertical; border:1px solid var(--line); border-radius:9px; padding:.7rem; font:inherit; }
-    .ingredient-row { display:grid; grid-template-columns:88px 86px minmax(130px,1fr) 105px auto auto; gap:.45rem; align-items:center; margin:.45rem 0; }
-    .ingredient-row label { display:none; } .ingredient-row .match { font-size:.78rem; color:var(--muted); grid-column:3/6; }
-    .ingredient-row.unresolved { background:#fff8e8; border-radius:9px; padding:.45rem; }
+    .ingredient-row { display:grid; grid-template-columns:64px 64px minmax(180px,1fr) 76px 58px 32px; gap:.3rem; align-items:center; min-height:34px; margin:0; padding:.18rem .25rem; border-bottom:1px solid var(--line); }
+    .ingredient-row input { height:30px; padding:.28rem .42rem; border-radius:6px; font-size:.87rem; }
+    .ingredient-row button { min-height:30px; padding:.26rem .38rem; border-radius:6px; font-size:.76rem; }
+    .ingredient-row .match { display:none; }
+    .ingredient-row.unresolved { border-left:3px solid #e3ad38; background:#fffdf6; }
+    .ingredient-head { display:grid; grid-template-columns:64px 64px minmax(180px,1fr) 76px 58px 32px; gap:.3rem; padding:.45rem .25rem .25rem; color:var(--muted); font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; }
     .field-label { display:block; color:var(--muted); font-size:.8rem; margin:.7rem 0 .2rem; }
     .coverage { font-size:.86rem; padding:.6rem .7rem; border-radius:9px; background:#fff8e8; margin:.7rem 0; }
     .search-result { width:100%; text-align:left; color:var(--ink); background:var(--soft); margin:.35rem 0; }
     .nutrition-note { font-size:.84rem; color:var(--muted); margin-top:.7rem; }
-    @media (max-width:650px) { .ingredient-row { grid-template-columns:1fr 1fr; } .ingredient-row input[data-name] { grid-column:1/-1; } .ingredient-row .match { grid-column:1/-1; } }
+    @media (max-width:650px) { .ingredient-row { grid-template-columns:1fr 1fr; } .ingredient-row input[data-name] { grid-column:1/-1; } }
     @media (max-width:980px) { main { grid-template-columns:1fr 1fr; } .right { grid-column:1/-1; } }
     @media (max-width:650px) { .shell { padding:.85rem; } main { display:block; } main>section { margin-top:1rem; } header { align-items:flex-start; } .date-control { order:3; width:100%; margin-left:0; } }
   </style>
@@ -61,8 +64,8 @@
       </section>
     </main>
   </div>
-  <div id="recipe-modal" class="modal" hidden><article class="modal-box"><div class="actions" style="justify-content:space-between"><h2>Recipe editor</h2><button class="secondary" onclick="closeRecipe()">Close</button></div><label class="field-label" for="recipe-name">Recipe name</label><input id="recipe-name"><div class="coverage">Keep the amount and unit people use (for example <em>1 tsp pepper</em>). Add a verified nutrition weight in grams separately; it never changes the displayed recipe.</div><div id="recipe-ingredients"></div><div class="actions"><button class="secondary" onclick="addRecipeRow()">Add ingredient row</button></div><label class="field-label" for="recipe-instructions">Instructions</label><textarea id="recipe-instructions"></textarea><div class="actions"><button onclick="saveRecipe()">Save recipe</button></div></article></div>
-  <div id="entry-modal" class="modal" hidden><article class="modal-box"><div class="actions" style="justify-content:space-between"><h2 id="entry-title">Edit day entry</h2><button class="secondary" onclick="closeEntry()">Close</button></div><p class="muted">Editing this entry changes only the selected day. Select a verified Fineli food and enter its gram weight to include it in nutrition.</p><div id="entry-ingredients"></div><div class="actions"><button class="secondary" onclick="addEntryRow()">Add ingredient row</button><button onclick="saveEntry()">Save day entry</button></div></article></div>
+  <div id="recipe-modal" class="modal" hidden><article class="modal-box"><div class="actions" style="justify-content:space-between"><h2>Recipe editor</h2><button class="secondary" onclick="closeRecipe()">Close</button></div><label class="field-label" for="recipe-name">Recipe name</label><input id="recipe-name"><div class="coverage">The recipe always keeps the original amount and unit. “Nutrition g” is a separate calculation weight.</div><div class="ingredient-head"><span>Amount</span><span>Unit</span><span>Ingredient</span><span>Nutrition g</span><span>Food</span><span></span></div><div id="recipe-ingredients"></div><div class="actions"><button class="secondary" onclick="addRecipeRow()">Add ingredient row</button></div><label class="field-label" for="recipe-instructions">Instructions</label><textarea id="recipe-instructions"></textarea><div class="actions"><button onclick="saveRecipe()">Save recipe</button></div></article></div>
+  <div id="entry-modal" class="modal" hidden><article class="modal-box"><div class="actions" style="justify-content:space-between"><h2 id="entry-title">Edit day entry</h2><button class="secondary" onclick="closeEntry()">Close</button></div><p class="muted">Editing this entry changes only the selected day. Select a verified Fineli food and enter its gram weight to include it in nutrition.</p><div class="ingredient-head"><span>Amount</span><span>Unit</span><span>Ingredient</span><span>Nutrition g</span><span>Food</span><span></span></div><div id="entry-ingredients"></div><div class="actions"><button class="secondary" onclick="addEntryRow()">Add ingredient row</button><button onclick="saveEntry()">Save day entry</button></div></article></div>
   <div id="food-modal" class="modal" hidden><article class="modal-box"><div class="actions" style="justify-content:space-between"><h2>Select Fineli food</h2><button class="secondary" onclick="closeFood()">Close</button></div><input id="food-query" placeholder="Search food, e.g. black pepper" oninput="searchFoods()"><div id="food-results" class="muted" style="margin-top:.7rem">Type at least two characters.</div></article></div>
   <script>
     const API = window.location.origin;
