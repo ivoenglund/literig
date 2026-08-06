@@ -47,7 +47,7 @@ export const fineliFoodStatus = (nutrientRows) => nutrientRows.length ? 'verifie
 
 export async function getFineliCatalogStatus(pool) {
   const catalog = await getFineliCatalog(); const codes = [...catalog.componentCodes];
-  const result = await pool.query(`SELECT (SELECT count(*)::int FROM foods WHERE source_name LIKE 'Fineli%' AND fineli_food_id IS NOT NULL) foods, (SELECT count(*)::int FROM nutrients WHERE code = ANY($1::text[])) nutrients, (SELECT count(*)::int FROM food_nutrients fn JOIN foods f ON f.id=fn.food_id JOIN nutrients n ON n.id=fn.nutrient_id WHERE f.source_name LIKE 'Fineli%' AND n.code=ANY($1::text[])) nutrient_values`, [codes]);
+  const result = await pool.query(`SELECT (SELECT count(*)::int FROM foods WHERE source_name LIKE 'Fineli%' AND fineli_food_id IS NOT NULL) foods, (SELECT count(*)::int FROM nutrients WHERE code = ANY($1::text[])) nutrients, (SELECT count(*)::int FROM food_nutrients fn JOIN foods f ON f.id=fn.food_id JOIN nutrients n ON n.id=fn.nutrient_id WHERE f.source_name LIKE 'Fineli%' AND f.fineli_food_id IS NOT NULL AND n.code=ANY($1::text[])) nutrient_values`, [codes]);
   const actual = result.rows[0]; return { expected: catalog.expected, actual: { foods: actual.foods, nutrients: actual.nutrients, nutrientValues: actual.nutrient_values }, complete: Number(actual.foods) === catalog.expected.foods && Number(actual.nutrients) === catalog.expected.nutrients && Number(actual.nutrient_values) === catalog.expected.nutrientValues, foodsWithoutEnglish: catalog.foodsWithoutEnglish };
 }
 export async function importFullFineli(pool, { offset = 0, limit = 25 } = {}) {
