@@ -380,6 +380,8 @@ app.get('/api/recipes-delete-status', async (_req, res) => {
 
 app.put('/api/recipes/:id', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const user = await sessionUser(req);
+  if (!isAdminEmail(user?.email)) return res.status(403).json({ error: 'Only an administrator can change an official recipe.' });
   const { name, instructions, image_url: imageUrl, ingredients = [] } = req.body;
   if (typeof instructions !== 'string' || typeof name !== 'string') return res.status(400).json({ error: 'name and instructions are required' });
   // Legacy recipes can contain text imported before UTF-8 handling was fixed.
@@ -405,6 +407,8 @@ app.put('/api/recipes/:id', async (req, res) => {
 
 app.delete('/api/recipes/:id', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const user = await sessionUser(req);
+  if (!isAdminEmail(user?.email)) return res.status(403).json({ error: 'Only an administrator can remove an official recipe.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
