@@ -7,7 +7,7 @@
   <style>
     :root { --bg:#f4f7f2; --panel:#fff; --ink:#17352b; --muted:#60746b; --line:#d9e4dc; --accent:#22734e; --soft:#e9f4ec; --danger:#a84040; }
     * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { margin:0; background:linear-gradient(rgba(244,247,242,.77),rgba(244,247,242,.84)),url('/assets/produce-background.png') center/cover fixed; color:var(--ink); font:16px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     button,input,select { font:inherit; }
     button { border:0; border-radius:9px; padding:.62rem .85rem; background:var(--accent); color:#fff; cursor:pointer; font-weight:650; }
     button:hover { filter:brightness(.94); } button.secondary { color:var(--ink); background:var(--soft); } button.danger { background:var(--danger); }
@@ -19,7 +19,7 @@
     .calendar-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:.4rem; font-weight:750; } .calendar-head button { min-width:2rem; padding:.25rem; }
     .calendar-weekdays,.calendar-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:.15rem; text-align:center; }.calendar-weekdays { color:var(--muted); font-size:.7rem; font-weight:700; margin-bottom:.2rem; }.calendar-grid button { aspect-ratio:1; min-width:0; padding:0; border-radius:7px; color:var(--ink); background:transparent; font-size:.78rem; }.calendar-grid button:hover { background:var(--soft); }.calendar-grid button.outside { color:#a5b2aa; }.calendar-grid button.selected { color:#fff; background:var(--accent); }.calendar-grid button.today:not(.selected) { border:1px solid var(--accent); }
     main { display:grid; grid-template-columns:minmax(220px,.8fr) minmax(360px,1.5fr) minmax(260px,.9fr); gap:1rem; align-items:start; }
-    .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:1.05rem; box-shadow:0 4px 18px rgba(31,70,51,.04); }
+    .card { background:rgba(255,255,255,.93); border:1px solid var(--line); border-radius:14px; padding:1.05rem; box-shadow:0 4px 18px rgba(31,70,51,.07); }
     .card + .card { margin-top:1rem; } h1,h2,h3,p { margin-top:0; } h2 { margin-bottom:.75rem; font-size:1rem; letter-spacing:-.015em; }
     .muted { color:var(--muted); font-size:.91rem; } .notice { padding:.75rem; border-radius:9px; background:var(--soft); color:#375548; font-size:.9rem; }
     .recipe,.entry { border-top:1px solid var(--line); padding:.8rem 0; } .recipe:first-child,.entry:first-child { border-top:0; padding-top:0; }
