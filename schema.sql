@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS recipe_entries (
   entry_id UUID PRIMARY KEY REFERENCES food_entries(id) ON DELETE CASCADE,
   recipe_id UUID NOT NULL REFERENCES recipes(id) ON DELETE RESTRICT,
   ingredients_snapshot JSONB NOT NULL DEFAULT '[]',
+  consumption_fraction NUMERIC(5,4) NOT NULL DEFAULT 1 CHECK (consumption_fraction >= 0 AND consumption_fraction <= 1),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

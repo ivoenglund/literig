@@ -300,13 +300,14 @@ app.get('/api/totals', async (req, res) => {
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
   try {
     const targetDate = req.query.date || new Date().toISOString().slice(0, 10), period=[1,7,30].includes(Number(req.query.period))?Number(req.query.period):1;
-    const entries = await pool.query(`SELECT fe.nutrition_estimate, re.ingredients_snapshot FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id=$1 AND fe.eaten_at::date BETWEEN ($2::date - ($3::int-1)) AND $2::date`, [userId, targetDate, period]);
+    const entries = await pool.query(`SELECT fe.nutrition_estimate, re.ingredients_snapshot, COALESCE(re.consumption_fraction, 1) AS consumption_fraction FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id=$1 AND fe.eaten_at::date BETWEEN ($2::date - ($3::int-1)) AND $2::date`, [userId, targetDate, period]);
     const sums = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const available = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, false]));
     const sourceIngredients = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const unresolved = []; let gramIngredients = 0, linkedGramIngredients = 0;
     for (const entry of entries.rows) {
       const snapshot = entry.nutrition_estimate || {};
+      const consumptionFraction = Math.max(0, Math.min(1, Number(entry.consumption_fraction ?? 1)));
       const coverage = snapshot.coverage || {};
       gramIngredients += Number(coverage.gram_ingredients || 0);
       linkedGramIngredients += Number(coverage.linked_gram_ingredients || 0);
@@ -314,7 +315,7 @@ app.get('/api/totals', async (req, res) => {
       const nutrients = Array.isArray(snapshot.nutrients) ? snapshot.nutrients : [
         ['energy_kcal','kcal'],['prot','protein_g'],['fat','fat_g'],['choavl','carbohydrate_g'],['fibc','fiber_g'],['ca','calcium_mg'],['fe','iron_mg'],['zn','zinc_mg'],['vitc','vitamin_c_mg'],['fol','folate_ug'],['vitb12','vitamin_b12_ug'],['vitd','vitamin_d_ug']
       ].map(([code,key]) => ({code,value:snapshot[key],supporting_ingredients:1}));
-      for (const nutrient of nutrients) if (nutrient.value != null) { const code = nutrient.code === 'enerc' ? 'energy_kcal' : nutrient.code; const target=DISPLAY_NUTRIENTS.find(([candidate])=>candidate===code); if(!target) continue; sums[code] += Number(nutrient.value); available[code] = true; sourceIngredients[code] += Number(nutrient.supporting_ingredients || 1); }
+      for (const nutrient of nutrients) if (nutrient.value != null) { const code = nutrient.code === 'enerc' ? 'energy_kcal' : nutrient.code; const target=DISPLAY_NUTRIENTS.find(([candidate])=>candidate===code); if(!target) continue; sums[code] += Number(nutrient.value) * consumptionFraction; available[code] = true; sourceIngredients[code] += Number(nutrient.supporting_ingredients || 1); }
     }
     const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code]/period : null, daily_value:DAILY_VALUES[code]||null, daily_percent:available[code]&&DAILY_VALUES[code]?sums[code]/period/(DAILY_VALUES[code])*100:null, source_ingredients: sourceIngredients[code],
       status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (sourceIngredients[code] < linkedGramIngredients || gramIngredients !== linkedGramIngredients ? 'partial_coverage' : 'covered')) }));
@@ -425,16 +426,18 @@ app.delete('/api/recipes/:id', async (req, res) => {
 
 app.post('/api/recipes/:id/log', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  const { user_id: userId, eaten_at: eatenAt, note = null } = req.body;
+  const { user_id: userId, eaten_at: eatenAt, note = null, consumption_fraction: consumptionFractionInput = 1 } = req.body;
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
+  const consumptionFraction = Number(consumptionFractionInput);
+  if (!Number.isFinite(consumptionFraction) || consumptionFraction < 0 || consumptionFraction > 1) return res.status(400).json({ error: 'consumption_fraction must be between 0 and 1' });
   try {
     const recipe = await pool.query('SELECT name FROM recipes WHERE id=$1', [req.params.id]);
     if (!recipe.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
     const ingredients = await pool.query(`SELECT ri.ingredient_name AS name, ri.amount, ri.unit, ri.amount_grams, ri.original_amount, ri.original_unit, ri.food_id, ri.preparation_state, f.state AS food_state, f.basis_amount, f.basis_unit, f.source_name, f.source_id FROM recipe_ingredients ri LEFT JOIN foods f ON f.id=ri.food_id WHERE ri.recipe_id=$1 ORDER BY ri.sort_order`, [req.params.id]);
     const calculation = await calculateSnapshotNutrition(pool, ingredients.rows);
     const result = await pool.query(`INSERT INTO food_entries (user_id, description, eaten_at, status, source, quantity_note, nutrition_estimate) VALUES ($1,$2,COALESCE($3,now()),'confirmed','recipe',$4,$5) RETURNING id,eaten_at,description,status,source,quantity_note,nutrition_estimate`, [userId, recipe.rows[0].name, eatenAt || null, note, JSON.stringify({ source: 'normalized_foods', nutrients: calculation.nutrients, coverage: calculation.coverage, basis: 'Fineli food_nutrients per 100 g at logging time' })]);
-    await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot) VALUES ($1,$2,$3)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows)]);
-    res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows, nutrition: calculation } });
+    await pool.query(`INSERT INTO recipe_entries (entry_id, recipe_id, ingredients_snapshot, consumption_fraction) VALUES ($1,$2,$3,$4)`, [result.rows[0].id, req.params.id, JSON.stringify(ingredients.rows), consumptionFraction]);
+    res.status(201).json({ entry: { ...result.rows[0], recipe_id: req.params.id, ingredients: ingredients.rows, consumption_fraction: consumptionFraction, nutrition: calculation } });
   } catch (error) { console.error('Recipe log failed:', error); res.status(500).json({ error: 'Could not log recipe', detail: error.message }); }
 });
 
@@ -466,7 +469,7 @@ app.get('/api/entries', async (req, res) => {
   const params = date ? [userId, date] : [userId];
   const dateClause = date ? ' AND eaten_at::date = $2' : '';
   try {
-    const result = await pool.query(`SELECT fe.id, fe.eaten_at, fe.description, fe.status, fe.source, fe.quantity_note, fe.nutrition_estimate, re.recipe_id, re.ingredients_snapshot AS ingredients FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id = $1${dateClause} ORDER BY fe.eaten_at DESC LIMIT 100`, params);
+    const result = await pool.query(`SELECT fe.id, fe.eaten_at, fe.description, fe.status, fe.source, fe.quantity_note, fe.nutrition_estimate, re.recipe_id, re.ingredients_snapshot AS ingredients, re.consumption_fraction FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id = $1${dateClause} ORDER BY fe.eaten_at DESC LIMIT 100`, params);
     res.json({ entries: result.rows, date: date || null });
   } catch (error) {
     console.error('Entry query failed:', error.message);
@@ -542,6 +545,18 @@ app.put('/api/recipe-entries/:entryId', async (req, res) => {
   } catch (error) { console.error('Recipe entry update failed:', error.message); res.status(500).json({ error: 'Could not update recipe entry' }); }
 });
 
+app.patch('/api/recipe-entries/:entryId/consumption', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'Database not configured' });
+  const { user_id: userId, consumption_fraction: input } = req.body;
+  const consumptionFraction = Number(input);
+  if (!userId || !Number.isFinite(consumptionFraction) || consumptionFraction < 0 || consumptionFraction > 1) return res.status(400).json({ error: 'A consumption fraction between 0 and 1 is required' });
+  try {
+    const updated = await pool.query(`UPDATE recipe_entries re SET consumption_fraction=$1, updated_at=now() FROM food_entries fe WHERE re.entry_id=$2 AND fe.id=re.entry_id AND fe.user_id=$3 RETURNING re.entry_id, re.consumption_fraction`, [consumptionFraction, req.params.entryId, userId]);
+    if (!updated.rows[0]) return res.status(404).json({ error: 'Recipe entry not found' });
+    res.json({ entry: updated.rows[0] });
+  } catch (error) { console.error('Recipe consumption update failed:', error.message); res.status(500).json({ error: 'Could not update amount eaten' }); }
+});
+
 app.post('/api/entries', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
   const { user_id: userId, description, eaten_at: eatenAt, status = 'confirmed', source = 'text', quantity_note: quantityNote = null, nutrition_estimate: nutritionEstimate = null } = req.body;
@@ -564,7 +579,7 @@ async function applyNutritionMigrations() {
   if (!pool) return;
   const client = await pool.connect();
   try {
-    const filenames = ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql', '017_retire_legacy_food_catalog.sql', '018_nutrition_data_repair.sql', '020_ai_usage_dashboard.sql', '021_magic_link_auth.sql'];
+    const filenames = ['002_normalized_nutrition.sql', '003_import_fineli_verified_foods.sql', '005_link_recipe_ingredients_fineli.sql', '006_recipe_snapshot_nutrition.sql', '007_restore_verified_spinach.sql', '008_unlink_ambiguous_seed_tofu.sql', '009_fineli_import_staging.sql', '010_explicit_recipe_preparation_state.sql', '011_recipe_image.sql', '012_recipe_image_data.sql', '013_recipe_original_units.sql', '014_fineli_catalog_import_runs.sql', '015_allow_unresolved_recipe_amounts.sql', '016_store_recipe_images_locally.sql', '017_retire_legacy_food_catalog.sql', '018_nutrition_data_repair.sql', '020_ai_usage_dashboard.sql', '021_magic_link_auth.sql', '022_recipe_consumption_fraction.sql'];
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
     // Older deployments predate migration tracking. The presence of the last pre-repair
     // table is their durable application record, so baseline them instead of replaying.
