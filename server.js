@@ -28,6 +28,7 @@ const DISPLAY_NUTRIENTS = [
   ['ribf', 'Vitamin B2', 'mg', 1], ['niaeq', 'Vitamin B3', 'mg', 1], ['vitpyrid', 'Vitamin B6', 'mg', 1],
   ['vitb12', 'Vitamin B12', 'µg', 1], ['vitd', 'Vitamin D', 'µg', 1], ['f18d3n3', 'Omega-3 ALA', 'g', 0.001]
 ];
+const DAILY_VALUES = { energy_kcal:2000, prot:50, fat:78, choavl:275, fibc:28, ca:1300, fe:18, zn:11, se:55, id:150, fol:400, vitc:90, vita:900, vitk:120, vite:15, thia:1.2, ribf:1.3, niaeq:16, vitpyrid:1.7, vitb12:2.4, vitd:20, f18d3n3:1.6 };
 
 function safeGramAmount(amount, unit, gramsPerUnit = null) {
   const value = Number(amount);
@@ -298,8 +299,8 @@ app.get('/api/totals', async (req, res) => {
   const userId = req.query.user_id;
   if (!userId) return res.status(400).json({ error: 'user_id is required' });
   try {
-    const targetDate = req.query.date || new Date().toISOString().slice(0, 10);
-    const entries = await pool.query(`SELECT fe.nutrition_estimate, re.ingredients_snapshot FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id=$1 AND fe.eaten_at::date=$2`, [userId, targetDate]);
+    const targetDate = req.query.date || new Date().toISOString().slice(0, 10), period=[1,7,30].includes(Number(req.query.period))?Number(req.query.period):1;
+    const entries = await pool.query(`SELECT fe.nutrition_estimate, re.ingredients_snapshot FROM food_entries fe LEFT JOIN recipe_entries re ON re.entry_id=fe.id WHERE fe.user_id=$1 AND fe.eaten_at::date BETWEEN ($2::date - ($3::int-1)) AND $2::date`, [userId, targetDate, period]);
     const sums = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
     const available = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, false]));
     const sourceIngredients = Object.fromEntries(DISPLAY_NUTRIENTS.map(([code]) => [code, 0]));
@@ -315,9 +316,9 @@ app.get('/api/totals', async (req, res) => {
       ].map(([code,key]) => ({code,value:snapshot[key],supporting_ingredients:1}));
       for (const nutrient of nutrients) if (nutrient.value != null) { const code = nutrient.code === 'enerc' ? 'energy_kcal' : nutrient.code; const target=DISPLAY_NUTRIENTS.find(([candidate])=>candidate===code); if(!target) continue; sums[code] += Number(nutrient.value); available[code] = true; sourceIngredients[code] += Number(nutrient.supporting_ingredients || 1); }
     }
-    const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code] : null, source_ingredients: sourceIngredients[code],
+    const nutrients = DISPLAY_NUTRIENTS.map(([code, name, unit]) => ({ code, name, unit, value: available[code] ? sums[code]/period : null, daily_value:DAILY_VALUES[code]||null, daily_percent:available[code]&&DAILY_VALUES[code]?sums[code]/period/(DAILY_VALUES[code])*100:null, source_ingredients: sourceIngredients[code],
       status: !entries.rows.length ? 'no_recipe_data' : (!available[code] ? 'missing_source_coverage' : (sourceIngredients[code] < linkedGramIngredients || gramIngredients !== linkedGramIngredients ? 'partial_coverage' : 'covered')) }));
-    res.json({ date: targetDate, recipe_entries: entries.rows.length, nutrients, coverage: { gram_ingredients: gramIngredients, linked_gram_ingredients: linkedGramIngredients, unresolved }, basis: 'Fineli food_nutrients per 100 g; immutable recipe snapshots only; no supplements' });
+    res.json({ date: targetDate, period, recipe_entries: entries.rows.length, nutrients, coverage: { gram_ingredients: gramIngredients, linked_gram_ingredients: linkedGramIngredients, unresolved }, basis: 'Fineli food_nutrients per 100 g; immutable recipe snapshots only; no supplements' });
   } catch (error) {
     console.error('Totals query failed:', error.message);
     res.status(500).json({ error: 'Could not load totals' });
@@ -379,7 +380,7 @@ app.get('/api/recipes-delete-status', async (_req, res) => {
 
 app.put('/api/recipes/:id', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'Database not configured' });
-  const { name, instructions, image_url: imageUrl = null, ingredients = [] } = req.body;
+  const { name, instructions, image_url: imageUrl, ingredients = [] } = req.body;
   if (typeof instructions !== 'string' || typeof name !== 'string') return res.status(400).json({ error: 'name and instructions are required' });
   // Legacy recipes can contain text imported before UTF-8 handling was fixed.
   // Do not block their nutrition links or edits; the editor preserves the text
@@ -387,7 +388,7 @@ app.put('/api/recipes/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const storedImage=await downloadRecipeImage(imageUrl);const result = await client.query('UPDATE recipes SET name=$1,instructions=$2,image_url=$3,image_data=$4,image_mime=$5 WHERE id=$6 RETURNING id,name,instructions,image_url', [name.trim(), instructions.trim(), imageUrl, storedImage.data, storedImage.mime, req.params.id]);
+    const replaceImage=typeof imageUrl==='string'&&imageUrl.trim();const storedImage=replaceImage?await downloadRecipeImage(imageUrl):null;const result = await client.query('UPDATE recipes SET name=$1,instructions=$2,image_url=CASE WHEN $3 THEN $4 ELSE image_url END,image_data=CASE WHEN $3 THEN $5 ELSE image_data END,image_mime=CASE WHEN $3 THEN $6 ELSE image_mime END WHERE id=$7 RETURNING id,name,instructions,image_url', [name.trim(), instructions.trim(),Boolean(replaceImage),imageUrl||null,storedImage?.data||null,storedImage?.mime||null,req.params.id]);
     if (!result.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Recipe not found' }); }
     await client.query('DELETE FROM recipe_ingredients WHERE recipe_id=$1', [req.params.id]);
     for (const [index, item] of ingredients.entries()) {
